@@ -359,6 +359,43 @@ if Inventory and Survival and testPlayer then
 	Inventory:RemoveItem(testPlayer, "Pistol", 7)
 	Inventory:RemoveItem(testPlayer, "PistolAmmo", 30)
 
+	-- Equipar armas
+	section("Equipar armas")
+	local Combat = loaded.CombatService
+	local function visualCount()
+		local total = 0
+		for _, child in character:GetChildren() do
+			if child.Name == "EquippedWeaponVisual" then
+				total += 1
+			end
+		end
+		return total
+	end
+	check("sin arma al empezar", Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+	check("no se equipa un arma que no se tiene", Combat:Equip(testPlayer, "Bat") == false and Combat:GetEquipped(testPlayer) == nil)
+	check("no se equipa un objeto que no es arma", Combat:Equip(testPlayer, "Cloth") == false and Combat:Equip(testPlayer, "Inventada") == false and Combat:Equip(testPlayer, 5) == false)
+
+	Inventory:AddItem(testPlayer, "Bat", 1)
+	Inventory:AddItem(testPlayer, "Knife", 1)
+	check("usar una ranura de arma la equipa", Inventory:UseSlot(testPlayer, slotOf("Bat")) == true and Combat:GetEquipped(testPlayer) == "Bat")
+	check("equipar no gasta el arma", Inventory:Count(testPlayer, "Bat") == 1)
+	check("el arma equipada se ve en el personaje", visualCount() == 1)
+	check("el arma equipada se replica como atributo", testPlayer:GetAttribute("EquippedWeapon") == "Bat")
+	check("usar otra arma cambia la equipada y solo hay una", Inventory:UseSlot(testPlayer, slotOf("Knife")) == true and Combat:GetEquipped(testPlayer) == "Knife" and visualCount() == 1)
+	check("usar el arma equipada la guarda", Inventory:UseSlot(testPlayer, slotOf("Knife")) == true and Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+	check("guardar el arma limpia el atributo", testPlayer:GetAttribute("EquippedWeapon") == nil)
+
+	Combat:Equip(testPlayer, "Bat")
+	check("soltar el arma equipada la desequipa", Inventory:DropSlot(testPlayer, slotOf("Bat")) == true and Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+	Combat:Equip(testPlayer, "Knife")
+	Inventory:RemoveItem(testPlayer, "Knife", 1)
+	check("si el arma sale del inventario se desequipa", Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+	for _, pickup in pickups:GetChildren() do
+		if pickup:GetAttribute("ItemId") == "Bat" then
+			pickup:Destroy()
+		end
+	end
+
 	-- Morir suelta todo
 	Inventory:AddItem(testPlayer, "CannedFood", 2)
 	Inventory:AddItem(testPlayer, "Bat", 1)

@@ -35,6 +35,10 @@ local function getSurvival()
 	return require(script.Parent.SurvivalService)
 end
 
+local function getCombat()
+	return require(script.Parent.CombatService)
+end
+
 local function notify(player: Player, text: string)
 	Remotes.get("Notify"):FireClient(player, text)
 end
@@ -42,6 +46,8 @@ end
 local function push(player: Player)
 	local inv = inventories[player]
 	if inv then
+		-- Si el arma equipada salió del inventario, se desequipa.
+		getCombat():SyncWithInventory(player)
 		Remotes.get("InventoryChanged"):FireClient(player, InventoryLogic.serialize(inv))
 	end
 end
@@ -203,7 +209,15 @@ function InventoryService:UseSlot(player: Player, slot): boolean
 
 	local config = Items[stack.id]
 	local applied = false
-	if config.kind == "Food" then
+	if config.kind == "Weapon" then
+		-- Equipar no gasta el objeto. Usar el arma equipada otra vez la guarda.
+		local Combat = getCombat()
+		if Combat:GetEquipped(player) == stack.id then
+			Combat:Unequip(player)
+			return true
+		end
+		return Combat:Equip(player, stack.id)
+	elseif config.kind == "Food" then
 		applied = Survival:Feed(player, config.hunger)
 		if not applied then
 			notify(player, "No tienes hambre")
