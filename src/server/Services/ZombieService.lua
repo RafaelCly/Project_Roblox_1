@@ -5,7 +5,8 @@
 --   ZombieService:Damage(model, amount, source) -> true si lo mató
 --   ZombieService:FromInstance(instance)        -> modelo del infectado o nil
 -- Estados: Idle, Wander, Investigate, Chase, Attack (decisión en shared/Util/ZombieBrain).
--- Pendiente (día 3): visión con cono y rayo, y oído. Hoy detecta por proximidad.
+-- Sentidos: visión con cono y rayo contra paredes (shared/Util/Vision) y oído de los
+-- ruidos que emite NoiseService.
 
 local PathfindingService = game:GetService("PathfindingService")
 local Players = game:GetService("Players")
@@ -17,6 +18,7 @@ local ZombieConfig = require(Shared.Config.Zombies)
 local RunConfig = require(Shared.Config.Run)
 local AI = require(Shared.Config.ZombieAI)
 local Brain = require(Shared.Util.ZombieBrain)
+local Vision = require(Shared.Util.Vision)
 
 local ZombieService = {}
 
@@ -115,7 +117,28 @@ local function isDowned(player: Player): boolean
 	return false
 end
 
--- Sentidos (marcador del día 2) ---------------------------------------------
+-- Sentidos ------------------------------------------------------------------
+
+-- Visión: dentro del cono (o alrededor si ya está alerta), dentro del alcance y sin
+-- pared en medio. Un infectado alerta (persiguiendo o atacando) ve más lejos y en 360°.
+local function canSee(record, targetPosition: Vector3, distance: number): boolean
+	local alerted = record.state == "Chase" or record.state == "Attack"
+	local range = record.config.sightRange * (alerted and AI.ALERT_RANGE_MULTIPLIER or 1)
+	if distance > range then
+		return false
+	end
+
+	local angle = alerted and 360 or record.config.sightAngle
+	local origin = record.root.Position
+	if not Vision.inFieldOfView(origin, record.root.CFrame.LookVector, targetPosition, range, angle, AI.AWARE_RANGE) then
+		return false
+	end
+
+	-- Una pared (o cualquier cosa sólida) entre los ojos y el jugador bloquea la vista.
+	local eye = origin + Vector3.new(0, AI.EYE_HEIGHT, 0)
+	local aim = targetPosition + Vector3.new(0, AI.TARGET_HEIGHT, 0)
+	return workspace:Raycast(eye, aim - eye, rayParams()) == nil
+end
 
 -- Devuelve el jugador al que el infectado prestará atención, su distancia y posición.
 -- Prefiere jugadores no caídos y, entre ellos, el más cercano.
@@ -129,7 +152,7 @@ local function senseTarget(record)
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		if humanoid and root and humanoid.Health > 0 then
 			local distance = (root.Position - origin).Magnitude
-			if distance <= AI.PROXIMITY_SENSE_RANGE then
+			if canSee(record, root.Position, distance) then
 				local downed = isDowned(player)
 				local better = (bestDowned and not downed) or (downed == bestDowned and distance < bestDistance)
 				if better then
@@ -436,6 +459,17 @@ end
 function ZombieService:Start()
 	-- Crear el modelo base ya, para que el primer Spawn no espere.
 	task.spawn(getTemplate)
+
+	-- Oído: un ruido atrae a los infectados que lo oyen (según el radio del ruido y la
+	-- sensibilidad de su tipo). Los que ya persiguen o atacan lo ignoran.
+	local NoiseService = require(script.Parent.NoiseService)
+	NoiseService:Subscribe(function(position: Vector3, radius: number)
+		for model, record in zombies do
+			if not record.dead and Vision.heardNoise(record.root.Position, position, radius, record.config.hearingMultiplier) then
+				ZombieService:Investigate(model, position)
+			end
+		end
+	end)
 
 	-- Un solo ciclo piensa por todos los infectados. Cada uno corre en su propio hilo
 	-- porque calcular una ruta espera, y no debe frenar a los demás.
