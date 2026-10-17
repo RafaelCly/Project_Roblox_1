@@ -722,4 +722,404 @@ else
 	failed += 1
 end
 
+-- ZombieService -------------------------------------------------------------------
+section("ZombieService")
+local ZombieSvc = loaded.ZombieService
+if ZombieSvc then
+	local zombiesFolder = workspace:FindFirstChild("Zombies")
+	check("existe la carpeta Zombies", zombiesFolder ~= nil)
+	check("empieza sin infectados vivos", ZombieSvc:CountActive() == 0)
+
+	local walker = ZombieSvc:Spawn("Walker", Vector3.new(0, 0, 60))
+	check("Spawn devuelve un modelo", walker ~= nil and walker:IsA("Model"))
+	if walker then
+		local walkerHumanoid = walker:FindFirstChildOfClass("Humanoid")
+		check("el modelo está en workspace.Zombies", walker.Parent == zombiesFolder)
+		check("el caminante tiene la vida y velocidad de su config", walkerHumanoid.MaxHealth == Zombies.Walker.health and walkerHumanoid.Health == Zombies.Walker.health and walkerHumanoid.WalkSpeed == Zombies.Walker.walkSpeed)
+		check("el modelo guarda su tipo", walker:GetAttribute("ZombieType") == "Walker" and walker:GetAttribute("IsZombie") == true)
+		check("el infectado se cuenta como vivo", ZombieSvc:CountActive() == 1)
+		check("el servidor es dueño de la física", walker.HumanoidRootPart:GetNetworkOwner() == nil)
+		check("el infectado no queda bajo el suelo", walker.HumanoidRootPart.Position.Y > -5)
+
+		-- FromInstance
+		check("FromInstance desde el modelo", ZombieSvc:FromInstance(walker) == walker)
+		check("FromInstance desde una de sus partes", ZombieSvc:FromInstance(walker:FindFirstChild("Head")) == walker)
+		check("FromInstance con algo que no es infectado", ZombieSvc:FromInstance(workspace.Terrain) == nil)
+		check("FromInstance con nil", ZombieSvc:FromInstance(nil) == nil)
+
+		-- Damage
+		check("un golpe no letal devuelve false", ZombieSvc:Damage(walker, 30, testPlayer) == false)
+		check("el golpe resta vida", walkerHumanoid.Health == Zombies.Walker.health - 30)
+		check("recuerda quién lo golpeó", ZombieSvc:GetRecord(walker).lastAttacker == testPlayer)
+		check("un daño inválido se ignora", ZombieSvc:Damage(walker, -5, testPlayer) == false and ZombieSvc:Damage(walker, "mucho", testPlayer) == false and walkerHumanoid.Health == Zombies.Walker.health - 30)
+		check("un golpe letal devuelve true", ZombieSvc:Damage(walker, 999, testPlayer) == true)
+		check("el infectado muerto ya no cuenta como vivo", ZombieSvc:CountActive() == 0 and ZombieSvc:IsDead(walker))
+		check("no se puede matar dos veces", ZombieSvc:Damage(walker, 10, testPlayer) == false)
+	end
+
+	-- Otros tipos
+	local runner = ZombieSvc:Spawn("Runner", Vector3.new(4, 0, 60))
+	local brute = ZombieSvc:Spawn("Brute", Vector3.new(8, 0, 60))
+	check("el corredor tiene su vida y velocidad", runner ~= nil and runner:FindFirstChildOfClass("Humanoid").MaxHealth == Zombies.Runner.health and runner:FindFirstChildOfClass("Humanoid").WalkSpeed == Zombies.Runner.walkSpeed)
+	check("el bruto tiene su vida", brute ~= nil and brute:FindFirstChildOfClass("Humanoid").MaxHealth == Zombies.Brute.health)
+
+	-- Tipo inválido
+	check("un tipo inexistente falla", not pcall(ZombieSvc.Spawn, ZombieSvc, "Dragon", Vector3.zero))
+
+	-- Límite de infectados activos
+	local originalLimit = RunConfig.MAX_ACTIVE_ZOMBIES
+	RunConfig.MAX_ACTIVE_ZOMBIES = ZombieSvc:CountActive() + 1
+	local allowed = ZombieSvc:Spawn("Walker", Vector3.new(12, 0, 60))
+	local blocked = ZombieSvc:Spawn("Walker", Vector3.new(16, 0, 60))
+	check("respeta el límite de infectados activos", allowed ~= nil and blocked == nil)
+	RunConfig.MAX_ACTIVE_ZOMBIES = originalLimit
+
+	-- Comando de desarrollo
+	local before = ZombieSvc:CountActive()
+	workspace:SetAttribute("DevSpawnZombies", 3)
+	task.wait(1)
+	check("el comando de desarrollo crea 3 infectados", ZombieSvc:CountActive() == before + 3)
+	check("el comando se reinicia solo", workspace:GetAttribute("DevSpawnZombies") == nil)
+
+	-- Limpieza
+	for _, child in zombiesFolder:GetChildren() do
+		if ZombieSvc:GetRecord(child) then
+			ZombieSvc:Damage(child, 99999, nil)
+		end
+	end
+	check("tras limpiar no quedan infectados vivos", ZombieSvc:CountActive() == 0)
+end
+
+-- ZombieBrain (decisiones puras) --------------------------------------------------
+section("ZombieBrain")
+local Brain = require(Shared.Util.ZombieBrain)
+local AI = require(Shared.Config.ZombieAI)
+local function brainCtx(overrides)
+	local context = {
+		hasTarget = false,
+		distance = 0,
+		attackRange = 4.5,
+		timeInState = 0,
+		idleTime = 3,
+		wanderTimeout = 8,
+		investigateTimeout = 10,
+		reachedPoint = false,
+		targetLostFor = math.huge,
+		loseSeconds = 2,
+	}
+	for key, value in overrides do
+		context[key] = value
+	end
+	return context
+end
+check("Idle espera antes de deambular", Brain.next("Idle", brainCtx({ timeInState = 1 })) == "Idle")
+check("Idle pasa a Wander al cumplir su espera", Brain.next("Idle", brainCtx({ timeInState = 3 })) == "Wander")
+check("Idle ve un jugador lejos: persigue", Brain.next("Idle", brainCtx({ hasTarget = true, distance = 12 })) == "Chase")
+check("Idle ve un jugador cerca: ataca", Brain.next("Idle", brainCtx({ hasTarget = true, distance = 3 })) == "Attack")
+check("Wander sigue caminando", Brain.next("Wander", brainCtx({ timeInState = 2 })) == "Wander")
+check("Wander llegó: vuelve a Idle", Brain.next("Wander", brainCtx({ reachedPoint = true })) == "Idle")
+check("Wander se rinde por tiempo", Brain.next("Wander", brainCtx({ timeInState = 8 })) == "Idle")
+check("Wander ve un jugador: persigue", Brain.next("Wander", brainCtx({ hasTarget = true, distance = 10 })) == "Chase")
+check("Investigate sigue yendo al punto", Brain.next("Investigate", brainCtx({ timeInState = 3 })) == "Investigate")
+check("Investigate llegó: vuelve a Idle", Brain.next("Investigate", brainCtx({ reachedPoint = true })) == "Idle")
+check("Investigate se rinde por tiempo", Brain.next("Investigate", brainCtx({ timeInState = 10 })) == "Idle")
+check("Investigate ve un jugador: persigue", Brain.next("Investigate", brainCtx({ hasTarget = true, distance = 9 })) == "Chase")
+check("Chase sigue si el jugador está lejos", Brain.next("Chase", brainCtx({ hasTarget = true, distance = 10 })) == "Chase")
+check("Chase pasa a Attack al llegar", Brain.next("Chase", brainCtx({ hasTarget = true, distance = 4 })) == "Attack")
+check("Chase aguanta unos segundos sin ver al jugador", Brain.next("Chase", brainCtx({ targetLostFor = 1 })) == "Chase")
+check("Chase pierde al jugador y va a Investigate", Brain.next("Chase", brainCtx({ targetLostFor = 2 })) == "Investigate")
+check("Attack sigue atacando a corta distancia", Brain.next("Attack", brainCtx({ hasTarget = true, distance = 3 })) == "Attack")
+check("Attack tiene margen en el borde del rango", Brain.next("Attack", brainCtx({ hasTarget = true, distance = 4.5 * 1.2 })) == "Attack")
+check("Attack vuelve a Chase si el jugador se aleja", Brain.next("Attack", brainCtx({ hasTarget = true, distance = 4.5 * 1.4 })) == "Chase")
+check("Attack sin ver al jugador un momento: Chase", Brain.next("Attack", brainCtx({ targetLostFor = 0.5 })) == "Chase")
+check("Attack pierde al jugador y va a Investigate", Brain.next("Attack", brainCtx({ targetLostFor = 3 })) == "Investigate")
+check("un estado desconocido cae a Idle", Brain.next("Inventado", brainCtx({})) == "Idle")
+
+-- Infectados: movimiento y ataque con el jugador real -----------------------------
+section("Infectados: movimiento y ataque")
+local function waitForAlivePlayer(timeout)
+	local startedAt = os.clock()
+	while os.clock() - startedAt < timeout do
+		local playerCharacter = testPlayer and testPlayer.Character
+		local hum = playerCharacter and playerCharacter:FindFirstChildOfClass("Humanoid")
+		local rootPart = playerCharacter and playerCharacter:FindFirstChild("HumanoidRootPart")
+		if hum and rootPart and hum.Health > 0 then
+			return playerCharacter, hum, rootPart
+		end
+		task.wait(0.25)
+	end
+	return nil
+end
+
+local playerCharacter, playerHumanoid, playerRoot = waitForAlivePlayer(20)
+if ZombieSvc and playerCharacter then
+	task.wait(1)
+	local base = playerRoot.Position
+	local function flat(a, b)
+		return Vector3.new(a.X - b.X, 0, a.Z - b.Z).Magnitude
+	end
+
+	-- Lejos del jugador (más de 16 studs): deambula e investiga.
+	local wanderer = ZombieSvc:Spawn("Walker", base + Vector3.new(0, 0, -90))
+	local investigator = ZombieSvc:Spawn("Walker", base + Vector3.new(-90, 0, 0))
+	local wandererStart = wanderer.HumanoidRootPart.Position
+	local investigatorStart = investigator.HumanoidRootPart.Position
+	local investigatePoint = investigatorStart + Vector3.new(25, 0, 0)
+	check("un infectado nuevo empieza en Idle", ZombieSvc:GetState(wanderer) == "Idle")
+	check("Investigate acepta la orden", ZombieSvc:Investigate(investigator, investigatePoint) == true)
+	check("el infectado pasa a Investigate", ZombieSvc:GetState(investigator) == "Investigate")
+
+	-- Cerca del jugador: persigue y ataca.
+	playerHumanoid.Health = playerHumanoid.MaxHealth
+	local chaser = ZombieSvc:Spawn("Walker", base + Vector3.new(14, 0, 0))
+	-- Mirando al jugador: la visión tiene cono, así que debe verlo de frente.
+	local chaserPosition = chaser.HumanoidRootPart.Position
+	chaser:PivotTo(CFrame.lookAt(chaserPosition, Vector3.new(base.X, chaserPosition.Y, base.Z)))
+	task.wait(1.5)
+	local chaserState = ZombieSvc:GetState(chaser)
+	check("ve al jugador cercano y lo persigue", chaserState == "Chase" or chaserState == "Attack", tostring(chaserState))
+
+	local healthBefore = playerHumanoid.Health
+	local attacked = false
+	local deadline = os.clock() + 12
+	while os.clock() < deadline do
+		if ZombieSvc:GetState(chaser) == "Attack" and playerHumanoid.Health < healthBefore then
+			attacked = true
+			break
+		end
+		task.wait(0.25)
+	end
+	check("llega hasta el jugador y ataca", attacked)
+	check("el ataque quita al menos el daño de su tipo", playerHumanoid.Health <= healthBefore - Zombies.Walker.damage)
+	check("al atacar queda dentro del alcance", flat(chaser.HumanoidRootPart.Position, playerRoot.Position) <= AI.ATTACK_RANGE * 1.5)
+
+	-- Un infectado muerto deja de atacar.
+	ZombieSvc:Damage(chaser, 9999, testPlayer)
+	task.wait(0.5)
+	local healthAfterKill = playerHumanoid.Health
+	task.wait(2)
+	check("un infectado muerto ya no ataca", playerHumanoid.Health == healthAfterKill)
+
+	-- Deambular: se mueve solo cuando no hay nadie cerca.
+	local moved = false
+	deadline = os.clock() + 12
+	while os.clock() < deadline do
+		if (wanderer.HumanoidRootPart.Position - wandererStart).Magnitude > 2 then
+			moved = true
+			break
+		end
+		task.wait(0.5)
+	end
+	check("sin jugadores cerca, el infectado deambula", moved)
+
+	-- Investigar: se acerca al punto indicado y luego se calma.
+	local approached = false
+	deadline = os.clock() + 12
+	while os.clock() < deadline do
+		if (investigator.HumanoidRootPart.Position - investigatePoint).Magnitude < 25 - 8 then
+			approached = true
+			break
+		end
+		task.wait(0.5)
+	end
+	check("el infectado se acerca al punto que investiga", approached)
+
+	local calmed = false
+	deadline = os.clock() + 15
+	while os.clock() < deadline do
+		if ZombieSvc:GetState(investigator) ~= "Investigate" then
+			calmed = true
+			break
+		end
+		task.wait(0.5)
+	end
+	check("al llegar al punto deja de investigar", calmed)
+	check("investigar no se acepta en un infectado muerto", (function()
+		local dummy = ZombieSvc:Spawn("Walker", base + Vector3.new(0, 0, -120))
+		ZombieSvc:Damage(dummy, 9999, nil)
+		return ZombieSvc:Investigate(dummy, base) == false
+	end)())
+
+	-- Limpieza
+	playerHumanoid.Health = playerHumanoid.MaxHealth
+	for _, child in workspace.Zombies:GetChildren() do
+		if ZombieSvc:GetRecord(child) then
+			ZombieSvc:Damage(child, 99999, nil)
+		end
+	end
+	check("tras limpiar no quedan infectados vivos (IA)", ZombieSvc:CountActive() == 0)
+else
+	warn("[Test] FAIL no hay jugador vivo para probar la IA de infectados")
+	failed += 1
+end
+
+-- Vision (matemática pura) -----------------------------------------------------------
+section("Vision (pura)")
+local Vision = require(Shared.Util.Vision)
+local origin = Vector3.new(0, 0, 0)
+local facingForward = Vector3.new(0, 0, -1)
+check("ve a quien está de frente y cerca", Vision.inFieldOfView(origin, facingForward, Vector3.new(0, 0, -20), 45, 110, 5) == true)
+check("no ve a quien está de espaldas", Vision.inFieldOfView(origin, facingForward, Vector3.new(0, 0, 20), 45, 110, 5) == false)
+check("no ve a quien está al costado a 90° con cono de 110°", Vision.inFieldOfView(origin, facingForward, Vector3.new(20, 0, 0), 45, 110, 5) == false)
+check("ve dentro del cono a 40° del frente", Vision.inFieldOfView(origin, facingForward, Vector3.new(math.sin(math.rad(40)) * 20, 0, -math.cos(math.rad(40)) * 20), 45, 110, 5) == true)
+check("no ve fuera del cono a 70° del frente", Vision.inFieldOfView(origin, facingForward, Vector3.new(math.sin(math.rad(70)) * 20, 0, -math.cos(math.rad(70)) * 20), 45, 110, 5) == false)
+check("no ve más lejos que su alcance", Vision.inFieldOfView(origin, facingForward, Vector3.new(0, 0, -50), 45, 110, 5) == false)
+check("nota a quien está pegado aunque esté detrás", Vision.inFieldOfView(origin, facingForward, Vector3.new(0, 0, 4), 45, 110, 5) == true)
+check("la presencia cercana también respeta el alcance", Vision.inFieldOfView(origin, facingForward, Vector3.new(0, 0, 4), 3, 110, 5) == false)
+check("alerta (360°) ve a quien está detrás", Vision.inFieldOfView(origin, facingForward, Vector3.new(0, 0, 30), 56, 360, 5) == true)
+check("la altura no cambia el ángulo", Vision.inFieldOfView(origin, facingForward, Vector3.new(0, 15, -20), 45, 110, 5) == true)
+check("un ruido dentro del radio se oye", Vision.heardNoise(Vector3.new(0, 0, 0), Vector3.new(0, 0, 20), 25) == true)
+check("un ruido fuera del radio no se oye", Vision.heardNoise(Vector3.new(0, 0, 0), Vector3.new(0, 0, 30), 25) == false)
+check("la sensibilidad amplía el oído", Vision.heardNoise(Vector3.new(0, 0, 0), Vector3.new(0, 0, 30), 25, 1.2) == true)
+check("la sensibilidad baja lo reduce", Vision.heardNoise(Vector3.new(0, 0, 0), Vector3.new(0, 0, 22), 25, 0.8) == false)
+
+-- Infectados: visión con paredes y oído -----------------------------------------------
+section("Infectados: visión y oído")
+local senseCharacter, senseHumanoid, senseRoot = waitForAlivePlayer(20)
+if ZombieSvc and loaded.NoiseService and senseCharacter then
+	task.wait(1)
+	local base2 = senseRoot.Position
+	local function faceTowards(model, targetPosition)
+		local position = model.HumanoidRootPart.Position
+		model:PivotTo(CFrame.lookAt(position, Vector3.new(targetPosition.X, position.Y, targetPosition.Z)))
+	end
+	local function isAlert(model)
+		local state = ZombieSvc:GetState(model)
+		return state == "Chase" or state == "Attack"
+	end
+
+	-- De espaldas no ve al jugador; al girarse, sí.
+	local turnedAway = ZombieSvc:Spawn("Walker", base2 + Vector3.new(0, 0, 14))
+	local awayPosition = turnedAway.HumanoidRootPart.Position
+	turnedAway:PivotTo(CFrame.lookAt(awayPosition, awayPosition + Vector3.new(0, 0, 10))) -- mira lejos del jugador
+	task.wait(0.8) -- menos que el mínimo de espera en Idle (2 s), para que no empiece a deambular
+	check("de espaldas, el infectado no ve al jugador", not isAlert(turnedAway), tostring(ZombieSvc:GetState(turnedAway)))
+	faceTowards(turnedAway, base2)
+	task.wait(0.8)
+	check("al girarse hacia el jugador, lo ve y persigue", isAlert(turnedAway), tostring(ZombieSvc:GetState(turnedAway)))
+	ZombieSvc:Damage(turnedAway, 9999, nil)
+
+	-- Una pared entre los dos bloquea la vista.
+	senseHumanoid.Health = senseHumanoid.MaxHealth
+	local behindWall = ZombieSvc:Spawn("Walker", base2 + Vector3.new(-14, 0, 0))
+	faceTowards(behindWall, base2)
+	local wall = Instance.new("Part")
+	wall.Name = "TestWall"
+	wall.Anchored = true
+	wall.Size = Vector3.new(1, 14, 30)
+	wall.Position = base2 + Vector3.new(-7, 4, 0)
+	wall.Parent = workspace
+	task.wait(0.8)
+	check("con una pared en medio, no lo ve", not isAlert(behindWall), tostring(ZombieSvc:GetState(behindWall)))
+	wall:Destroy()
+	task.wait(0.8)
+	check("sin la pared, lo ve y persigue", isAlert(behindWall), tostring(ZombieSvc:GetState(behindWall)))
+	ZombieSvc:Damage(behindWall, 9999, nil)
+
+	-- Oído: lejos del jugador (más de 56 studs), según radio y sensibilidad.
+	local Noise = loaded.NoiseService
+	local walkerEar = ZombieSvc:Spawn("Walker", base2 + Vector3.new(0, 0, -100))
+	local runnerEar = ZombieSvc:Spawn("Runner", base2 + Vector3.new(-100, 0, 0))
+	local walkerPos = walkerEar.HumanoidRootPart.Position
+	local runnerPos = runnerEar.HumanoidRootPart.Position
+	Noise:Emit(walkerPos + Vector3.new(30, 0, 0), 26, nil) -- Walker oye hasta 26; está a 30
+	task.wait(0.3)
+	check("el caminante no oye un ruido a 30 studs con radio 26", ZombieSvc:GetState(walkerEar) ~= "Investigate")
+	Noise:Emit(runnerPos + Vector3.new(30, 0, 0), 26, nil) -- Runner oye hasta 31,2
+	task.wait(0.3)
+	check("el corredor, más sensible, sí lo oye", ZombieSvc:GetState(runnerEar) == "Investigate")
+	Noise:Emit(walkerPos + Vector3.new(20, 0, 0), 26, nil)
+	task.wait(0.3)
+	check("el caminante oye un ruido a 20 studs", ZombieSvc:GetState(walkerEar) == "Investigate")
+
+	-- Va hacia el origen del ruido.
+	local noiseOrigin = runnerPos + Vector3.new(30, 0, 0)
+	local startDistance = (runnerEar.HumanoidRootPart.Position - noiseOrigin).Magnitude
+	task.wait(3)
+	check("el infectado se acerca al origen del ruido", (runnerEar.HumanoidRootPart.Position - noiseOrigin).Magnitude < startDistance - 6)
+
+	-- Un infectado que ya persigue ignora el ruido.
+	local hunter = ZombieSvc:Spawn("Walker", base2 + Vector3.new(10, 0, 0))
+	faceTowards(hunter, base2)
+	task.wait(1)
+	local hunterWasAlert = isAlert(hunter)
+	Noise:Emit(hunter.HumanoidRootPart.Position + Vector3.new(5, 0, 0), 60, nil)
+	task.wait(0.3)
+	check("un infectado que persigue ignora los ruidos", hunterWasAlert and isAlert(hunter))
+
+	-- Limpieza
+	senseHumanoid.Health = senseHumanoid.MaxHealth
+	for _, child in workspace.Zombies:GetChildren() do
+		if ZombieSvc:GetRecord(child) then
+			ZombieSvc:Damage(child, 99999, nil)
+		end
+	end
+	check("tras limpiar no quedan infectados vivos (sentidos)", ZombieSvc:CountActive() == 0)
+else
+	warn("[Test] FAIL no hay jugador vivo para probar los sentidos")
+	failed += 1
+end
+
+-- Infectados: golpes y bajas -----------------------------------------------------------
+section("Infectados: golpes y bajas")
+local hitCharacter, hitHumanoid, hitRoot = waitForAlivePlayer(20)
+local DataSvc = loaded.DataService
+if ZombieSvc and DataSvc and hitCharacter then
+	task.wait(1)
+	local base3 = hitRoot.Position
+	local function stateIsAlert(model)
+		local s = ZombieSvc:GetState(model)
+		return s == "Chase" or s == "Attack"
+	end
+
+	-- Un golpe alerta a un infectado que no veía al jugador (de espaldas y a 25 studs).
+	local sleeper = ZombieSvc:Spawn("Walker", base3 + Vector3.new(0, 0, 25))
+	local sleeperPosition = sleeper.HumanoidRootPart.Position
+	sleeper:PivotTo(CFrame.lookAt(sleeperPosition, sleeperPosition + Vector3.new(0, 0, 10)))
+	task.wait(0.6)
+	check("antes del golpe, de espaldas y lejos, no está alerta", not stateIsAlert(sleeper), tostring(ZombieSvc:GetState(sleeper)))
+	check("un golpe no letal devuelve false", ZombieSvc:Damage(sleeper, 10, testPlayer) == false)
+	check("el golpe lo alerta y persigue", ZombieSvc:GetState(sleeper) == "Chase", tostring(ZombieSvc:GetState(sleeper)))
+	local lookVector = sleeper.HumanoidRootPart.CFrame.LookVector
+	local toPlayer = Vector3.new(base3.X - sleeperPosition.X, 0, base3.Z - sleeperPosition.Z).Unit
+	check("al ser golpeado se gira hacia quien lo golpeó", lookVector:Dot(toPlayer) > 0.9)
+
+	-- Sin jugador que lo golpee (daño ambiental), no se alerta.
+	local quiet = ZombieSvc:Spawn("Walker", base3 + Vector3.new(0, 0, -25))
+	local quietPosition = quiet.HumanoidRootPart.Position
+	quiet:PivotTo(CFrame.lookAt(quietPosition, quietPosition + Vector3.new(0, 0, -10)))
+	ZombieSvc:Damage(quiet, 10, nil)
+	check("un daño sin jugador no lo alerta", not stateIsAlert(quiet), tostring(ZombieSvc:GetState(quiet)))
+
+	-- Aviso de muerte y estadísticas.
+	local killed = {}
+	ZombieSvc:OnKilled(function(model, killer, typeId)
+		table.insert(killed, { model = model, killer = killer, typeId = typeId })
+	end)
+	local profile = DataSvc:Get(testPlayer)
+	local killsBefore = profile.stats.zombiesKilled
+	check("un golpe letal devuelve true", ZombieSvc:Damage(sleeper, 9999, testPlayer) == true)
+	task.wait(0.2)
+	check("OnKilled avisa con el modelo, quien mató y el tipo", #killed == 1 and killed[1].model == sleeper and killed[1].killer == testPlayer and killed[1].typeId == "Walker")
+	check("la baja suma a las estadísticas del jugador", profile.stats.zombiesKilled == killsBefore + 1)
+
+	ZombieSvc:Damage(quiet, 9999, nil)
+	task.wait(0.2)
+	check("una muerte sin jugador avisa con killer nil", #killed == 2 and killed[2].killer == nil)
+	check("una muerte sin jugador no suma estadísticas", profile.stats.zombiesKilled == killsBefore + 1)
+	check("un infectado muerto no vuelve a avisar", ZombieSvc:Damage(sleeper, 10, testPlayer) == false and #killed == 2)
+
+	-- Limpieza
+	hitHumanoid.Health = hitHumanoid.MaxHealth
+	for _, child in workspace.Zombies:GetChildren() do
+		if ZombieSvc:GetRecord(child) then
+			ZombieSvc:Damage(child, 99999, nil)
+		end
+	end
+	check("tras limpiar no quedan infectados vivos (golpes)", ZombieSvc:CountActive() == 0)
+else
+	warn("[Test] FAIL no hay jugador vivo para probar golpes y bajas")
+	failed += 1
+end
+
 print(`[Test] RESULTADO: {passed} PASS, {failed} FAIL`)
