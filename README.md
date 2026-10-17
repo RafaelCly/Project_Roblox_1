@@ -13,7 +13,7 @@ Desarrollado por [@RafaelCly](https://github.com/RafaelCly) y Axel.
 
 - [x] Idea y diseño del MVP
 - [x] Estructura del proyecto con Rojo (esqueletos)
-- [ ] Semana 1: guardado, vida y hambre, inventario básico, un edificio con botín
+- [x] Semana 1: guardado, vida y hambre, inventario básico, un edificio con botín (108 pruebas pasan en Studio; falta probar el guardado real y con varios jugadores)
 - [ ] Semana 2: armas e infectado básico
 - [ ] Semana 3: ruido, sigilo, oleada 1, mapa modular
 - [ ] Semana 4: lobby, matchmaking, 3 oleadas y búnker (partida completa)

@@ -1,0 +1,2 @@
+-- Este script vacío reemplaza al script "Health" por defecto de Roblox,
+-- que regenera la vida sola. En Last Refuge la vida solo sube con vendas.

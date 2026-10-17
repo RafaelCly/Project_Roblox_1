@@ -12,6 +12,8 @@ local Run = {
 
 	MAX_ACTIVE_ZOMBIES = 50,
 
+	INVENTORY_SLOTS = 8,
+
 	-- Oleadas: segundo de inicio y presupuesto base de dificultad.
 	Waves = {
 		{ startsAt = 8 * 60, budget = 20 },
