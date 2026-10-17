@@ -372,4 +372,72 @@ else
 	failed += 1
 end
 
+-- ZombieService -------------------------------------------------------------------
+section("ZombieService")
+local ZombieSvc = loaded.ZombieService
+if ZombieSvc then
+	local zombiesFolder = workspace:FindFirstChild("Zombies")
+	check("existe la carpeta Zombies", zombiesFolder ~= nil)
+	check("empieza sin infectados vivos", ZombieSvc:CountActive() == 0)
+
+	local walker = ZombieSvc:Spawn("Walker", Vector3.new(0, 0, 60))
+	check("Spawn devuelve un modelo", walker ~= nil and walker:IsA("Model"))
+	if walker then
+		local walkerHumanoid = walker:FindFirstChildOfClass("Humanoid")
+		check("el modelo está en workspace.Zombies", walker.Parent == zombiesFolder)
+		check("el caminante tiene la vida y velocidad de su config", walkerHumanoid.MaxHealth == Zombies.Walker.health and walkerHumanoid.Health == Zombies.Walker.health and walkerHumanoid.WalkSpeed == Zombies.Walker.walkSpeed)
+		check("el modelo guarda su tipo", walker:GetAttribute("ZombieType") == "Walker" and walker:GetAttribute("IsZombie") == true)
+		check("el infectado se cuenta como vivo", ZombieSvc:CountActive() == 1)
+		check("el servidor es dueño de la física", walker.HumanoidRootPart:GetNetworkOwner() == nil)
+		check("el infectado no queda bajo el suelo", walker.HumanoidRootPart.Position.Y > -5)
+
+		-- FromInstance
+		check("FromInstance desde el modelo", ZombieSvc:FromInstance(walker) == walker)
+		check("FromInstance desde una de sus partes", ZombieSvc:FromInstance(walker:FindFirstChild("Head")) == walker)
+		check("FromInstance con algo que no es infectado", ZombieSvc:FromInstance(workspace.Terrain) == nil)
+		check("FromInstance con nil", ZombieSvc:FromInstance(nil) == nil)
+
+		-- Damage
+		check("un golpe no letal devuelve false", ZombieSvc:Damage(walker, 30, testPlayer) == false)
+		check("el golpe resta vida", walkerHumanoid.Health == Zombies.Walker.health - 30)
+		check("recuerda quién lo golpeó", ZombieSvc:GetRecord(walker).lastAttacker == testPlayer)
+		check("un daño inválido se ignora", ZombieSvc:Damage(walker, -5, testPlayer) == false and ZombieSvc:Damage(walker, "mucho", testPlayer) == false and walkerHumanoid.Health == Zombies.Walker.health - 30)
+		check("un golpe letal devuelve true", ZombieSvc:Damage(walker, 999, testPlayer) == true)
+		check("el infectado muerto ya no cuenta como vivo", ZombieSvc:CountActive() == 0 and ZombieSvc:IsDead(walker))
+		check("no se puede matar dos veces", ZombieSvc:Damage(walker, 10, testPlayer) == false)
+	end
+
+	-- Otros tipos
+	local runner = ZombieSvc:Spawn("Runner", Vector3.new(4, 0, 60))
+	local brute = ZombieSvc:Spawn("Brute", Vector3.new(8, 0, 60))
+	check("el corredor tiene su vida y velocidad", runner ~= nil and runner:FindFirstChildOfClass("Humanoid").MaxHealth == Zombies.Runner.health and runner:FindFirstChildOfClass("Humanoid").WalkSpeed == Zombies.Runner.walkSpeed)
+	check("el bruto tiene su vida", brute ~= nil and brute:FindFirstChildOfClass("Humanoid").MaxHealth == Zombies.Brute.health)
+
+	-- Tipo inválido
+	check("un tipo inexistente falla", not pcall(ZombieSvc.Spawn, ZombieSvc, "Dragon", Vector3.zero))
+
+	-- Límite de infectados activos
+	local originalLimit = RunConfig.MAX_ACTIVE_ZOMBIES
+	RunConfig.MAX_ACTIVE_ZOMBIES = ZombieSvc:CountActive() + 1
+	local allowed = ZombieSvc:Spawn("Walker", Vector3.new(12, 0, 60))
+	local blocked = ZombieSvc:Spawn("Walker", Vector3.new(16, 0, 60))
+	check("respeta el límite de infectados activos", allowed ~= nil and blocked == nil)
+	RunConfig.MAX_ACTIVE_ZOMBIES = originalLimit
+
+	-- Comando de desarrollo
+	local before = ZombieSvc:CountActive()
+	workspace:SetAttribute("DevSpawnZombies", 3)
+	task.wait(1)
+	check("el comando de desarrollo crea 3 infectados", ZombieSvc:CountActive() == before + 3)
+	check("el comando se reinicia solo", workspace:GetAttribute("DevSpawnZombies") == nil)
+
+	-- Limpieza
+	for _, child in zombiesFolder:GetChildren() do
+		if ZombieSvc:GetRecord(child) then
+			ZombieSvc:Damage(child, 99999, nil)
+		end
+	end
+	check("tras limpiar no quedan infectados vivos", ZombieSvc:CountActive() == 0)
+end
+
 print(`[Test] RESULTADO: {passed} PASS, {failed} FAIL`)
