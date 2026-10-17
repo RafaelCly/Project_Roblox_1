@@ -9,9 +9,11 @@
 -- ruidos que emite NoiseService.
 
 local PathfindingService = game:GetService("PathfindingService")
+local PhysicsService = game:GetService("PhysicsService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local ZombieConfig = require(Shared.Config.Zombies)
@@ -22,7 +24,8 @@ local Vision = require(Shared.Util.Vision)
 
 local ZombieService = {}
 
-local CORPSE_SECONDS = 3
+local CORPSE_SECONDS = 1.2
+local CORPSE_GROUP = "Corpses"
 local SKIN_COLOR = Color3.fromRGB(105, 135, 85)
 local CLOTH_COLOR = Color3.fromRGB(70, 70, 75)
 
@@ -303,6 +306,22 @@ local function kill(record)
 	activeCount -= 1
 	record.humanoid.Health = 0
 
+	-- El cadáver no debe bloquear balas ni golpes. CanQuery=false no basta (los rayos
+	-- siguen tocando modelos con Humanoid), así que va a un grupo de colisión que no
+	-- choca con "Default": los rayos y búsquedas de armas lo atraviesan. Se ancla para
+	-- que no se hunda en el suelo y se desvanece antes de borrarse.
+	local fade = TweenInfo.new(CORPSE_SECONDS * 0.8)
+	for _, descendant in record.model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.CollisionGroup = CORPSE_GROUP
+			descendant.CanQuery = false
+			descendant.CanCollide = false
+			descendant.CanTouch = false
+			descendant.Anchored = true
+			TweenService:Create(descendant, fade, { Transparency = 1 }):Play()
+		end
+	end
+
 	-- Aviso de muerte: quien mató es el último jugador que lo golpeó (puede ser nil).
 	local killer = record.lastAttacker
 	if typeof(killer) == "Instance" and killer:IsA("Player") and killer.Parent then
@@ -483,6 +502,14 @@ end
 -- Ciclo de vida -----------------------------------------------------------
 
 function ZombieService:Init()
+	-- Grupo de colisión de los cadáveres: no choca con nada, así que ni las balas
+	-- ni los golpes lo detectan. Registrar un grupo que ya existe da error: pcall.
+	pcall(function()
+		PhysicsService:RegisterCollisionGroup(CORPSE_GROUP)
+	end)
+	PhysicsService:CollisionGroupSetCollidable(CORPSE_GROUP, "Default", false)
+	PhysicsService:CollisionGroupSetCollidable(CORPSE_GROUP, CORPSE_GROUP, false)
+
 	zombieFolder = workspace:FindFirstChild("Zombies")
 	if not zombieFolder then
 		zombieFolder = Instance.new("Folder")

@@ -844,6 +844,12 @@ local function waitForAlivePlayer(timeout)
 		local hum = playerCharacter and playerCharacter:FindFirstChildOfClass("Humanoid")
 		local rootPart = playerCharacter and playerCharacter:FindFirstChild("HumanoidRootPart")
 		if hum and rootPart and hum.Health > 0 then
+			-- Al reaparecer, Roblox da un escudo (ForceField) de 10 s y con él no hay daño.
+			for _, child in playerCharacter:GetChildren() do
+				if child:IsA("ForceField") then
+					child:Destroy()
+				end
+			end
 			return playerCharacter, hum, rootPart
 		end
 		task.wait(0.25)
@@ -1119,6 +1125,102 @@ if ZombieSvc and DataSvc and hitCharacter then
 	check("tras limpiar no quedan infectados vivos (golpes)", ZombieSvc:CountActive() == 0)
 else
 	warn("[Test] FAIL no hay jugador vivo para probar golpes y bajas")
+	failed += 1
+end
+
+-- Armas de Axel contra infectados reales (integración) ------------------------------------
+section("Armas contra infectados reales")
+local CombatSvc = loaded.CombatService
+local armsCharacter, armsHumanoid, armsRoot = waitForAlivePlayer(20)
+if CombatSvc and ZombieSvc and Inventory and DataSvc and armsCharacter then
+	task.wait(1)
+	local aimFlat = Vector3.new(armsRoot.CFrame.LookVector.X, 0, armsRoot.CFrame.LookVector.Z).Unit
+	local armsProfile = DataSvc:Get(testPlayer)
+	local killsAtStart = armsProfile.stats.zombiesKilled
+	local function spawnAhead(distance)
+		return ZombieSvc:Spawn("Walker", armsRoot.Position + aimFlat * distance)
+	end
+	local function isAlertNow(model)
+		local s = ZombieSvc:GetState(model)
+		return s == "Chase" or s == "Attack"
+	end
+
+	-- Bate contra un infectado real
+	Inventory:AddItem(testPlayer, "Bat", 1)
+	CombatSvc:Equip(testPlayer, "Bat")
+	local batTarget = spawnAhead(3)
+	local batHumanoid = batTarget:FindFirstChildOfClass("Humanoid")
+	task.wait(0.3)
+	local batOk, batHits = CombatSvc:Attack(testPlayer, aimFlat)
+	check("el bate golpea a un infectado real", batOk == true and batHits == 1, `ok={tostring(batOk)} hits={tostring(batHits)}`)
+	check("el golpe resta el daño del bate", batHumanoid.Health == Zombies.Walker.health - Weapons.Bat.damage, tostring(batHumanoid.Health))
+	check("el infectado golpeado se alerta", isAlertNow(batTarget), tostring(ZombieSvc:GetState(batTarget)))
+
+	local swings = 0
+	while not ZombieSvc:IsDead(batTarget) and swings < 8 do
+		task.wait(Weapons.Bat.cooldown + 0.1)
+		CombatSvc:Attack(testPlayer, aimFlat)
+		swings += 1
+	end
+	check("el bate termina matando al infectado", ZombieSvc:IsDead(batTarget), `golpes extra: {swings}`)
+	check("la baja del bate suma a las estadísticas", armsProfile.stats.zombiesKilled == killsAtStart + 1)
+	local corpseParts, corpseQueryable = 0, 0
+	for _, descendant in batTarget:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			corpseParts += 1
+			if descendant.CanQuery then
+				corpseQueryable += 1
+			end
+		end
+	end
+	check("el cadáver no se puede apuntar (balas y golpes lo atraviesan)", corpseParts > 0 and corpseQueryable == 0, `{corpseQueryable}/{corpseParts}`)
+	check("el cadáver está en el grupo de colisión Corpses", batTarget:FindFirstChild("UpperTorso") ~= nil and batTarget.UpperTorso.CollisionGroup == "Corpses")
+	local throughCorpse = workspace:Raycast(armsRoot.Position, aimFlat * 10)
+	check("un rayo atraviesa el cadáver", throughCorpse == nil or ZombieSvc:FromInstance(throughCorpse.Instance) == nil)
+	CombatSvc:Unequip(testPlayer)
+	Inventory:RemoveItem(testPlayer, "Bat", 1)
+
+	-- Pistola contra un infectado real, y el ruido llega a otro lejano
+	armsHumanoid.Health = armsHumanoid.MaxHealth
+	Inventory:AddItem(testPlayer, "Pistol", 1)
+	Inventory:AddItem(testPlayer, "PistolAmmo", 20)
+	CombatSvc:Equip(testPlayer, "Pistol")
+	CombatSvc:_setMagazine(testPlayer, "Pistol", Weapons.Pistol.magazineSize)
+	local shotTarget = spawnAhead(20)
+	local shotHumanoid = shotTarget:FindFirstChildOfClass("Humanoid")
+	local farListener = ZombieSvc:Spawn("Walker", armsRoot.Position - aimFlat * 90)
+	task.wait(0.4)
+	local shotOk, shotHits = CombatSvc:Attack(testPlayer, aimFlat, armsRoot.Position)
+	task.wait(0.3)
+	check("la pistola acierta a un infectado real", shotOk == true and shotHits == 1, `ok={tostring(shotOk)} hits={tostring(shotHits)}`)
+	check("el disparo resta el daño de la pistola", shotHumanoid.Health <= Zombies.Walker.health - Weapons.Pistol.damage, tostring(shotHumanoid.Health))
+	check("el disparo atrae a un infectado lejano que no veía al jugador", ZombieSvc:GetState(farListener) == "Investigate", tostring(ZombieSvc:GetState(farListener)))
+
+	local shots = 0
+	while not ZombieSvc:IsDead(shotTarget) and shots < 6 do
+		task.wait(Weapons.Pistol.cooldown + 0.1)
+		CombatSvc:Attack(testPlayer, aimFlat, armsRoot.Position)
+		shots += 1
+	end
+	check("la pistola termina matando al infectado", ZombieSvc:IsDead(shotTarget), `disparos extra: {shots}`)
+	check("la baja de la pistola suma a las estadísticas", armsProfile.stats.zombiesKilled == killsAtStart + 2)
+
+	-- Limpieza
+	CombatSvc:Unequip(testPlayer)
+	Inventory:RemoveItem(testPlayer, "Pistol", 1)
+	local ammoLeft = Inventory:Count(testPlayer, "PistolAmmo")
+	if ammoLeft > 0 then
+		Inventory:RemoveItem(testPlayer, "PistolAmmo", ammoLeft)
+	end
+	armsHumanoid.Health = armsHumanoid.MaxHealth
+	for _, child in workspace.Zombies:GetChildren() do
+		if ZombieSvc:GetRecord(child) then
+			ZombieSvc:Damage(child, 99999, nil)
+		end
+	end
+	check("tras limpiar no quedan infectados vivos (armas)", ZombieSvc:CountActive() == 0)
+else
+	warn("[Test] FAIL no hay jugador vivo para probar armas contra infectados")
 	failed += 1
 end
 
