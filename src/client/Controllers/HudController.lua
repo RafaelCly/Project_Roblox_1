@@ -1,13 +1,17 @@
 --!nonstrict
 -- HudController
 -- Barras de vida y hambre, y mensajes cortos del servidor (Notify).
--- Pendiente: munición e indicador de ruido (semana 2 y 3).
+-- Munición del arma de fuego equipada (cargador / reserva).
+-- Pendiente: indicador de ruido (semana 3).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
-local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Remotes = require(Shared:WaitForChild("Remotes"))
+local Items = require(Shared:WaitForChild("Config"):WaitForChild("Items"))
+local Weapons = require(Shared:WaitForChild("Config"):WaitForChild("Weapons"))
 
 local HudController = {}
 
@@ -75,6 +79,64 @@ function HudController:Start()
 	message.TextTransparency = 1
 	message.BackgroundTransparency = 1
 	message.Parent = gui
+
+	-- Munición: "cargador / reserva". Solo se ve con un arma de fuego equipada.
+	local ammoLabel = Instance.new("TextLabel")
+	ammoLabel.Name = "Ammo"
+	ammoLabel.AnchorPoint = Vector2.new(1, 1)
+	ammoLabel.Position = UDim2.new(1, -16, 1, -86)
+	ammoLabel.Size = UDim2.fromOffset(180, 44)
+	ammoLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	ammoLabel.BackgroundTransparency = 0.25
+	ammoLabel.BorderSizePixel = 0
+	ammoLabel.Font = Enum.Font.GothamBold
+	ammoLabel.TextSize = 22
+	ammoLabel.TextColor3 = Color3.new(1, 1, 1)
+	ammoLabel.Visible = false
+	ammoLabel.Parent = gui
+
+	local ammoCorner = Instance.new("UICorner")
+	ammoCorner.CornerRadius = UDim.new(0, 8)
+	ammoCorner.Parent = ammoLabel
+
+	local localPlayer = Players.LocalPlayer
+	local lastSlots = {}
+
+	local function refreshAmmo()
+		local itemId = localPlayer:GetAttribute("EquippedWeapon")
+		local item = itemId and Items[itemId]
+		local weapon = item and Weapons[item.weaponId]
+		if not weapon or weapon.kind ~= "Firearm" then
+			ammoLabel.Visible = false
+			return
+		end
+		ammoLabel.Visible = true
+
+		local reserve = 0
+		for _, stack in lastSlots do
+			if stack.id == weapon.ammoId then
+				reserve += stack.count
+			end
+		end
+		if localPlayer:GetAttribute("Reloading") then
+			ammoLabel.Text = "Recargando..."
+			ammoLabel.TextColor3 = Color3.fromRGB(240, 200, 90)
+			return
+		end
+		local magazine = localPlayer:GetAttribute("Magazine") or 0
+		ammoLabel.Text = `{magazine} / {reserve}`
+		-- Rojo si no se puede disparar: cargador vacío.
+		ammoLabel.TextColor3 = magazine > 0 and Color3.new(1, 1, 1) or Color3.fromRGB(220, 80, 80)
+	end
+
+	for _, attribute in { "EquippedWeapon", "Magazine", "Reloading" } do
+		localPlayer:GetAttributeChangedSignal(attribute):Connect(refreshAmmo)
+	end
+
+	Remotes.get("InventoryChanged").OnClientEvent:Connect(function(slots)
+		lastSlots = slots
+		refreshAmmo()
+	end)
 
 	local messageId = 0
 

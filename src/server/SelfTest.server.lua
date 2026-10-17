@@ -503,6 +503,101 @@ if Inventory and Survival and testPlayer then
 	Inventory:RemoveItem(testPlayer, "Bat", 1)
 
 	check("con las manos vacías no se puede atacar", Combat:Attack(testPlayer, look) == false)
+
+	-- Pistola, munición y recarga
+	section("Pistola")
+	local pistol = Weapons.Pistol
+	local aimOrigin = root.Position
+	local function shootAhead()
+		return Combat:Attack(testPlayer, look, aimOrigin)
+	end
+	local function waitCooldown()
+		task.wait(pistol.cooldown + 0.1)
+	end
+	local function waitReload()
+		task.wait(pistol.reloadTime + 0.2)
+	end
+
+	Inventory:AddItem(testPlayer, "Pistol", 1)
+	check("una pistola recién equipada tiene el cargador vacío", Combat:Equip(testPlayer, "Pistol") and Combat:GetMagazine(testPlayer) == 0 and testPlayer:GetAttribute("Magazine") == 0)
+	local noiseAtStart = #noiseLog
+	check("la pistola sin balas no dispara ni hace ruido", shootAhead() == false and #noiseLog == noiseAtStart)
+	check("recargar sin munición en el inventario se rechaza", Combat:Reload(testPlayer) == false)
+
+	Inventory:AddItem(testPlayer, "PistolAmmo", 20)
+	check("recargar empieza y marca que está recargando", Combat:Reload(testPlayer) == true and Combat:IsReloading(testPlayer) == true and testPlayer:GetAttribute("Reloading") == true)
+	check("no se dispara ni se recarga otra vez mientras recarga", Combat:Attack(testPlayer, look, aimOrigin) == false and Combat:Reload(testPlayer) == false)
+	waitReload()
+	check("al terminar, la recarga llena el cargador con la munición del inventario", Combat:GetMagazine(testPlayer) == pistol.magazineSize and Inventory:Count(testPlayer, "PistolAmmo") == 20 - pistol.magazineSize)
+	check("terminada la recarga se limpia el estado", Combat:IsReloading(testPlayer) == false and testPlayer:GetAttribute("Reloading") == nil and testPlayer:GetAttribute("Magazine") == pistol.magazineSize)
+	check("con el cargador lleno no se recarga", Combat:Reload(testPlayer) == false)
+
+	-- Un muro y dos infectados en línea: el rayo se detiene en lo primero que toca.
+	damageLog = {}
+	local noiseBefore = #noiseLog
+	local wall = Instance.new("Part")
+	wall.Anchored = true
+	wall.Size = Vector3.new(10, 10, 1)
+	wall.CFrame = CFrame.lookAt(root.Position + look * 6, root.Position + look * 7)
+	wall.Parent = workspace
+	local shotAtWall = makeFakeZombie(look * 12)
+	local okWall, hitsWall = shootAhead()
+	check("un muro frena el disparo", okWall == true and hitsWall == 0 and #damageLog == 0)
+	check("el disparo gasta una bala aunque no acierte", Combat:GetMagazine(testPlayer) == pistol.magazineSize - 1)
+	wall:Destroy()
+	waitCooldown()
+	local firstTarget = makeFakeZombie(look * 15)
+	local secondTarget = makeFakeZombie(look * 25)
+	local okShot, hitsShot = shootAhead()
+	check("el disparo acierta al primer infectado en línea", okShot == true and hitsShot == 1 and #damageLog == 1 and damageLog[1].model == shotAtWall)
+	check("el disparo hace el daño de la pistola y avisa quién disparó", damageLog[1].amount == pistol.damage and damageLog[1].source == testPlayer)
+	check("el disparo hace mucho ruido", #noiseLog == noiseBefore + 2 and noiseLog[#noiseLog] == pistol.noiseRadius)
+	check("disparar antes del cooldown se rechaza", shootAhead() == false)
+	shotAtWall:Destroy()
+	waitCooldown()
+	okShot, hitsShot = shootAhead()
+	check("sin el primero, el rayo alcanza al siguiente", okShot == true and damageLog[2].model == firstTarget)
+	for _, model in { firstTarget, secondTarget } do
+		model:Destroy()
+	end
+
+	-- Entradas inválidas del cliente
+	waitCooldown()
+	local bullets = Combat:GetMagazine(testPlayer)
+	check("dirección inválida del disparo se rechaza", Combat:Attack(testPlayer, nil, aimOrigin) == false and Combat:Attack(testPlayer, Vector3.zero, aimOrigin) == false and Combat:Attack(testPlayer, "norte", aimOrigin) == false)
+	check("origen inválido del disparo se rechaza", Combat:Attack(testPlayer, look, nil) == false and Combat:Attack(testPlayer, look, root.Position + Vector3.new(500, 0, 0)) == false and Combat:Attack(testPlayer, look, Vector3.new(0 / 0, 0, 0)) == false)
+	check("un disparo rechazado no gasta balas", Combat:GetMagazine(testPlayer) == bullets)
+
+	-- Última bala y recarga parcial
+	Combat:_setMagazine(testPlayer, "Pistol", 1)
+	check("la última bala dispara", shootAhead() == true and Combat:GetMagazine(testPlayer) == 0)
+	waitCooldown()
+	check("con el cargador vacío ya no dispara", shootAhead() == false)
+
+	Combat:_setMagazine(testPlayer, "Pistol", 10)
+	local ammoBefore = Inventory:Count(testPlayer, "PistolAmmo")
+	Combat:Reload(testPlayer)
+	waitReload()
+	check("la recarga respeta el tamaño del cargador", Combat:GetMagazine(testPlayer) == pistol.magazineSize and Inventory:Count(testPlayer, "PistolAmmo") == ammoBefore - 2)
+
+	Combat:_setMagazine(testPlayer, "Pistol", 0)
+	Inventory:RemoveItem(testPlayer, "PistolAmmo", Inventory:Count(testPlayer, "PistolAmmo") - 3)
+	Combat:Reload(testPlayer)
+	waitReload()
+	check("con poca munición se carga solo lo que hay", Combat:GetMagazine(testPlayer) == 3 and Inventory:Count(testPlayer, "PistolAmmo") == 0)
+
+	-- Cambiar de arma cancela la recarga
+	Inventory:AddItem(testPlayer, "PistolAmmo", 5)
+	Combat:_setMagazine(testPlayer, "Pistol", 0)
+	Combat:Reload(testPlayer)
+	Combat:Unequip(testPlayer)
+	check("guardar el arma cancela la recarga", Combat:IsReloading(testPlayer) == false and testPlayer:GetAttribute("Reloading") == nil and testPlayer:GetAttribute("Magazine") == nil)
+	waitReload()
+	check("la recarga cancelada no gasta munición", Inventory:Count(testPlayer, "PistolAmmo") == 5)
+	check("el cargador se recuerda al volver a equipar", Combat:Equip(testPlayer, "Pistol") and Combat:GetMagazine(testPlayer) == 0)
+	Inventory:RemoveItem(testPlayer, "Pistol", 1)
+	Inventory:RemoveItem(testPlayer, "PistolAmmo", 5)
+
 	Combat:SetZombieProvider(nil)
 
 	-- Morir suelta todo

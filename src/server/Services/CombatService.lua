@@ -1,9 +1,11 @@
 --!nonstrict
 -- CombatService
--- Armas del jugador: equipar y mostrar el arma en la mano. Dueño: Axel.
--- Solo hay un arma equipada a la vez. El servidor decide cuál está equipada;
--- el cliente la ve como atributo "EquippedWeapon" del jugador.
--- Cuerpo a cuerpo: Attack valida y golpea en un cono. Pendiente: pistola y munición.
+-- Armas del jugador: equipar, golpear, disparar y recargar. Dueño: Axel.
+-- Solo hay un arma equipada a la vez. El servidor decide todo; el cliente ve el
+-- estado como atributos del jugador:
+--   EquippedWeapon  id del arma equipada (nil si no hay)
+--   Magazine        balas en el cargador del arma de fuego equipada
+--   Reloading       true mientras recarga
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,8 +19,11 @@ local CombatService = {}
 
 local VISUAL_NAME = "EquippedWeaponVisual"
 local ATTRIBUTE_NAME = "EquippedWeapon"
+local MAGAZINE_ATTRIBUTE = "Magazine"
+local RELOADING_ATTRIBUTE = "Reloading"
 local MELEE_HALF_ANGLE = 60 -- grados a cada lado de la mirada
 local COS_MELEE_HALF_ANGLE = math.cos(math.rad(MELEE_HALF_ANGLE))
+local MAX_AIM_ORIGIN_DISTANCE = 20 -- la cámara en tercera persona queda cerca del jugador
 
 -- Piezas simples sin arte final: un bloque largo por arma.
 local VISUALS = {
@@ -28,6 +33,9 @@ local VISUALS = {
 }
 
 local equipped = {} -- [Player] = itemId
+local magazines = {} -- [Player] = { [itemId] = balas en el cargador }
+local reloading = {} -- [Player] = ficha de la recarga en curso
+local lastAttack = {} -- [Player] = os.clock() del último golpe o disparo
 
 local function getInventory()
 	return require(script.Parent.InventoryService)
@@ -78,6 +86,30 @@ local function attachVisual(player: Player, weaponId: string): boolean
 	return true
 end
 
+local function weaponOf(itemId: string?)
+	local item = itemId and Items[itemId]
+	return item and Weapons[item.weaponId] or nil
+end
+
+-- Munición del cargador del arma `itemId` (0 si nunca se cargó).
+local function rounds(player: Player, itemId: string): number
+	local own = magazines[player]
+	return own and own[itemId] or 0
+end
+
+local function setRounds(player: Player, itemId: string, value: number)
+	magazines[player] = magazines[player] or {}
+	magazines[player][itemId] = value
+	if equipped[player] == itemId then
+		player:SetAttribute(MAGAZINE_ATTRIBUTE, value)
+	end
+end
+
+local function cancelReload(player: Player)
+	reloading[player] = nil
+	player:SetAttribute(RELOADING_ATTRIBUTE, nil)
+end
+
 -- API pública -------------------------------------------------------------
 
 -- Devuelve el id del arma equipada (por ejemplo "Bat") o nil.
@@ -85,19 +117,41 @@ function CombatService:GetEquipped(player: Player): string?
 	return equipped[player]
 end
 
+-- Balas en el cargador del arma equipada, o nil si no es un arma de fuego.
+function CombatService:GetMagazine(player: Player): number?
+	local itemId = equipped[player]
+	local weapon = weaponOf(itemId)
+	if itemId and weapon and weapon.kind == "Firearm" then
+		return rounds(player, itemId)
+	end
+	return nil
+end
+
+function CombatService:IsReloading(player: Player): boolean
+	return reloading[player] ~= nil
+end
+
+-- Solo para pruebas: fija las balas de un cargador.
+function CombatService:_setMagazine(player: Player, itemId: string, value: number)
+	setRounds(player, itemId, value)
+end
+
 function CombatService:Unequip(player: Player)
 	if equipped[player] == nil then
 		return
 	end
+	cancelReload(player)
 	equipped[player] = nil
 	player:SetAttribute(ATTRIBUTE_NAME, nil)
+	player:SetAttribute(MAGAZINE_ATTRIBUTE, nil)
 	removeVisual(player)
 end
 
 -- Equipa un arma del inventario. Devuelve false si no se pudo.
 function CombatService:Equip(player: Player, itemId): boolean
 	local config = typeof(itemId) == "string" and Items[itemId]
-	if not config or config.kind ~= "Weapon" or not Weapons[config.weaponId] then
+	local weapon = config and weaponOf(itemId)
+	if not config or config.kind ~= "Weapon" or not weapon then
 		return false
 	end
 	if getInventory():Count(player, itemId) < 1 then
@@ -108,14 +162,17 @@ function CombatService:Equip(player: Player, itemId): boolean
 		return false
 	end
 
+	cancelReload(player)
 	removeVisual(player)
 	if not attachVisual(player, config.weaponId) then
 		equipped[player] = nil
 		player:SetAttribute(ATTRIBUTE_NAME, nil)
+		player:SetAttribute(MAGAZINE_ATTRIBUTE, nil)
 		return false
 	end
 	equipped[player] = itemId
 	player:SetAttribute(ATTRIBUTE_NAME, itemId)
+	player:SetAttribute(MAGAZINE_ATTRIBUTE, weapon.kind == "Firearm" and rounds(player, itemId) or nil)
 	return true
 end
 
@@ -125,6 +182,58 @@ function CombatService:SyncWithInventory(player: Player)
 	if itemId and getInventory():Count(player, itemId) < 1 then
 		CombatService:Unequip(player)
 	end
+end
+
+-- Comprobaciones comunes ----------------------------------------------------
+
+-- Datos del jugador listos para atacar o recargar, o false y el motivo.
+local function attackContext(player: Player)
+	local itemId = equipped[player]
+	local weapon = weaponOf(itemId)
+	if not weapon then
+		return false, "noWeapon"
+	end
+
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not root or humanoid.Health <= 0 then
+		return false, "dead"
+	end
+	local Survival = require(script.Parent.SurvivalService)
+	if type(Survival.IsDowned) == "function" and Survival:IsDowned(player) then
+		return false, "downed"
+	end
+	return { itemId = itemId, weapon = weapon, character = character, root = root }
+end
+
+-- Marca el golpe o disparo si ya pasó el cooldown. Devuelve false si todavía no.
+local function consumeCooldown(player: Player, weapon): boolean
+	local now = os.clock()
+	if lastAttack[player] and now - lastAttack[player] < weapon.cooldown then
+		return false
+	end
+	lastAttack[player] = now
+	return true
+end
+
+-- El equipo de infectados es de Rafael. Se puede cambiar el proveedor para pruebas.
+local zombieProvider = nil
+function CombatService:SetZombieProvider(provider)
+	zombieProvider = provider
+end
+
+local function getZombies()
+	return zombieProvider or require(script.Parent.ZombieService)
+end
+
+local function emitNoise(position: Vector3, weapon, player: Player)
+	require(script.Parent.NoiseService):Emit(position, weapon.noiseRadius, player)
+end
+
+-- Un vector que mande el cliente debe ser un número finito y no casi cero.
+local function finiteVector(value): boolean
+	return typeof(value) == "Vector3" and value.Magnitude > 0.01 and value.Magnitude < math.huge
 end
 
 -- Cuerpo a cuerpo ---------------------------------------------------------
@@ -142,28 +251,18 @@ function CombatService.inMeleeCone(origin: Vector3, direction: Vector3, targetPo
 	return offset.Unit:Dot(direction) >= COS_MELEE_HALF_ANGLE
 end
 
--- Normaliza la dirección que manda el cliente. Devuelve nil si no sirve.
-local function sanitizeDirection(direction): Vector3?
-	if typeof(direction) ~= "Vector3" then
+-- Normaliza la dirección horizontal que manda el cliente. Devuelve nil si no sirve.
+local function flatDirection(direction): Vector3?
+	if not finiteVector(direction) then
 		return nil
 	end
 	local flat = Vector3.new(direction.X, 0, direction.Z)
 	local magnitude = flat.Magnitude
-	-- NaN e infinito no pasan la comparación; una mirada casi vertical tampoco.
-	if not (magnitude > 0.01 and magnitude < math.huge) then
+	-- Una mirada casi vertical no da dirección horizontal.
+	if not (magnitude > 0.01) then
 		return nil
 	end
 	return flat / magnitude
-end
-
--- El equipo de infectados es de Rafael. Se puede cambiar el proveedor para pruebas.
-local zombieProvider = nil
-function CombatService:SetZombieProvider(provider)
-	zombieProvider = provider
-end
-
-local function getZombies()
-	return zombieProvider or require(script.Parent.ZombieService)
 end
 
 -- Infectados dentro del cono (sin repetir). Devuelve una lista de modelos.
@@ -190,68 +289,150 @@ local function findMeleeTargets(character: Model, origin: Vector3, direction: Ve
 	return targets
 end
 
-local lastAttack = {} -- [Player] = os.clock() del último golpe
-
--- Un golpe cuerpo a cuerpo. Devuelve true y cuántos infectados golpeó,
--- o false y el motivo del rechazo. El servidor decide todo.
-function CombatService:Attack(player: Player, direction)
-	local look = sanitizeDirection(direction)
+local function melee(player: Player, context, direction)
+	local look = flatDirection(direction)
 	if not look then
 		return false, "invalidDirection"
 	end
-
-	local itemId = equipped[player]
-	local weapon = itemId and Weapons[Items[itemId].weaponId]
-	if not weapon then
-		return false, "noWeapon"
-	end
-	if weapon.kind ~= "Melee" then
-		return false, "notMelee"
-	end
-
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or not root or humanoid.Health <= 0 then
-		return false, "dead"
-	end
-	local Survival = require(script.Parent.SurvivalService)
-	if type(Survival.IsDowned) == "function" and Survival:IsDowned(player) then
-		return false, "downed"
-	end
-
-	local now = os.clock()
-	if lastAttack[player] and now - lastAttack[player] < weapon.cooldown then
+	local weapon = context.weapon
+	if not consumeCooldown(player, weapon) then
 		return false, "cooldown"
 	end
-	lastAttack[player] = now
 
-	local origin = root.Position
+	local origin = context.root.Position
 	local hits = 0
-	for _, model in findMeleeTargets(character, origin, look, weapon.range) do
+	for _, model in findMeleeTargets(context.character, origin, look, weapon.range) do
 		getZombies():Damage(model, weapon.damage, player)
 		hits += 1
 	end
 
 	-- Cada golpe hace ruido, acierte o no.
-	require(script.Parent.NoiseService):Emit(origin, weapon.noiseRadius, player)
+	emitNoise(origin, weapon, player)
 
 	if weapon.durability then
-		local broken = getInventory():WearWeapon(player, itemId, 1, weapon.durability)
+		local broken = getInventory():WearWeapon(player, context.itemId, 1, weapon.durability)
 		if broken then
-			Remotes.get("Notify"):FireClient(player, `Se rompió: {Items[itemId].displayName}`)
+			Remotes.get("Notify"):FireClient(player, `Se rompió: {Items[context.itemId].displayName}`)
 		end
 	end
 	return true, hits
 end
 
+-- Armas de fuego ------------------------------------------------------------
+
+local function shoot(player: Player, context, direction, origin)
+	if not finiteVector(direction) then
+		return false, "invalidDirection"
+	end
+	if
+		typeof(origin) ~= "Vector3"
+		or not (origin.Magnitude < math.huge)
+		or (origin - context.root.Position).Magnitude > MAX_AIM_ORIGIN_DISTANCE
+	then
+		return false, "invalidOrigin"
+	end
+
+	local weapon, itemId = context.weapon, context.itemId
+	if reloading[player] then
+		return false, "reloading"
+	end
+	if rounds(player, itemId) <= 0 then
+		return false, "empty"
+	end
+	if not consumeCooldown(player, weapon) then
+		return false, "cooldown"
+	end
+	setRounds(player, itemId, rounds(player, itemId) - 1)
+
+	-- El rayo lo lanza el servidor. El cliente solo mostró el disparo al instante.
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore = { context.character }
+	local pickups = workspace:FindFirstChild("Pickups")
+	if pickups then
+		table.insert(ignore, pickups)
+	end
+	params.FilterDescendantsInstances = ignore
+
+	local hits = 0
+	local result = workspace:Raycast(origin, direction.Unit * weapon.range, params)
+	local Zombies = getZombies()
+	if result and type(Zombies.FromInstance) == "function" then
+		local model = Zombies:FromInstance(result.Instance)
+		if model then
+			Zombies:Damage(model, weapon.damage, player)
+			hits = 1
+		end
+	end
+
+	emitNoise(context.root.Position, weapon, player)
+	return true, hits
+end
+
+-- Un golpe o un disparo. `direction` es hacia donde apunta el jugador; para las armas de
+-- fuego `origin` es el punto de partida del rayo (la cámara). Devuelve true y cuántos
+-- infectados alcanzó, o false y el motivo del rechazo. El servidor decide todo.
+function CombatService:Attack(player: Player, direction, origin)
+	local context, reason = attackContext(player)
+	if not context then
+		return false, reason
+	end
+	if context.weapon.kind == "Firearm" then
+		return shoot(player, context, direction, origin)
+	end
+	return melee(player, context, direction)
+end
+
+-- Recarga el arma de fuego equipada con munición del inventario. Tarda `reloadTime`.
+-- Devuelve true si empezó a recargar, o false y el motivo.
+function CombatService:Reload(player: Player)
+	local context, reason = attackContext(player)
+	if not context then
+		return false, reason
+	end
+	local weapon, itemId = context.weapon, context.itemId
+	if weapon.kind ~= "Firearm" then
+		return false, "notFirearm"
+	end
+	if reloading[player] then
+		return false, "reloading"
+	end
+	if rounds(player, itemId) >= weapon.magazineSize then
+		return false, "full"
+	end
+	local Inventory = getInventory()
+	if Inventory:Count(player, weapon.ammoId) < 1 then
+		return false, "noAmmo"
+	end
+
+	local token = {}
+	reloading[player] = token
+	player:SetAttribute(RELOADING_ATTRIBUTE, true)
+	task.delay(weapon.reloadTime, function()
+		-- Si se cambió de arma, murió o salió, la recarga ya se canceló.
+		if reloading[player] ~= token or equipped[player] ~= itemId then
+			return
+		end
+		cancelReload(player)
+		local missing = weapon.magazineSize - rounds(player, itemId)
+		local taken = math.min(missing, Inventory:Count(player, weapon.ammoId))
+		if taken > 0 and Inventory:RemoveItem(player, weapon.ammoId, taken) then
+			setRounds(player, itemId, rounds(player, itemId) + taken)
+		end
+	end)
+	return true
+end
+
 -- Ciclo de vida -----------------------------------------------------------
 
 local function onPlayerAdded(player: Player)
-	-- Un personaje nuevo nace con las manos vacías.
+	-- Un personaje nuevo nace con las manos vacías y sin balas.
 	player.CharacterAdded:Connect(function()
+		cancelReload(player)
 		equipped[player] = nil
+		magazines[player] = nil
 		player:SetAttribute(ATTRIBUTE_NAME, nil)
+		player:SetAttribute(MAGAZINE_ATTRIBUTE, nil)
 	end)
 end
 
@@ -264,12 +445,17 @@ function CombatService:Start()
 	end
 	Players.PlayerRemoving:Connect(function(player)
 		equipped[player] = nil
+		magazines[player] = nil
+		reloading[player] = nil
 		lastAttack[player] = nil
 	end)
 
-	-- El cliente solo pide. Todo se valida en Attack.
-	Remotes.get("RequestAttack").OnServerEvent:Connect(function(player, direction)
-		CombatService:Attack(player, direction)
+	-- El cliente solo pide. Todo se valida en Attack y Reload.
+	Remotes.get("RequestAttack").OnServerEvent:Connect(function(player, direction, origin)
+		CombatService:Attack(player, direction, origin)
+	end)
+	Remotes.get("RequestReload").OnServerEvent:Connect(function(player)
+		CombatService:Reload(player)
 	end)
 end
 

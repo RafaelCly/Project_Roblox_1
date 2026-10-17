@@ -12,6 +12,7 @@ export type WeaponConfig = {
 	durability: number?,
 	magazineSize: number?,
 	reloadTime: number?,
+	ammoId: string?,
 }
 
 local Weapons: { [string]: WeaponConfig } = {
@@ -42,6 +43,7 @@ local Weapons: { [string]: WeaponConfig } = {
 		noiseRadius = 120,
 		magazineSize = 12,
 		reloadTime = 1.8,
+		ammoId = "PistolAmmo",
 	},
 }
 
