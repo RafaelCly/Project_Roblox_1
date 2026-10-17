@@ -1,6 +1,7 @@
-# Diseño del MVP: supervivencia cooperativa postapocalíptica
+# Diseño del MVP: Last Refuge
 
-Nombre de trabajo: **por definir** (propuestas: *Último Refugio*, *Búnker 9*, *Hora Cero*).
+Nombre del juego: **Last Refuge** (en español, *Último Refugio*). Supervivencia cooperativa postapocalíptica.
+Nota: existe un juego móvil llamado *Last Shelter: Survival*; por eso usamos *Refuge* y no *Shelter*. Falta buscar el nombre en Roblox para confirmar que está libre.
 Estado: borrador v1, 16 de octubre de 2026. Autores: Rafael y Axel, con apoyo de Claude.
 
 ## 1. Visión en una frase
@@ -18,6 +19,11 @@ Tres o cuatro supervivientes aparecen sin nada en un mundo en ruinas. Tienen 30 
 | Grupo | 3 a 4 jugadores |
 | Estructura | Lobby, sala de espera por grupo, y salas generales para que se conecte gente nueva |
 | Tono | Project Zomboid: escasez, ruido, gestión de recursos |
+| Levantar caído | Una sola vez por jugador y por partida. Si vuelve a caer, muere |
+| Progresión permanente | Ligera: estadísticas y cosméticos, sin ventajas de poder |
+| Cambiar ítems | Ambos: pasar objetos entre jugadores y fabricar con materiales |
+| Inicio de partida | Con 2 jugadores ya se puede empezar (la sala admite hasta 4) |
+| Cámara | Tercera persona estándar de Roblox, con cámara sobre el hombro al apuntar |
 
 ## 3. Pilares de diseño
 
@@ -53,6 +59,7 @@ Si el tiempo termina o todos mueren, se pierde la partida y se vuelve al lobby.
 - **Espacio limitado** por cuadrículas o por peso (a decidir, lo más simple es por número de ranuras).
 - Mochila mejora el espacio (cosmético y de progreso de partida).
 - **Soltar y pasar objetos** entre jugadores del grupo. Esto es el "cambiar municiones, comida e ítems" de la idea original.
+- **Fabricación:** 5 a 8 recetas simples en el MVP (por ejemplo venda con tela, trampa de ruido con latas, cargador con munición suelta). Más recetas pueden venir en actualizaciones.
 - Al morir, el cuerpo suelta lo que llevaba. **Otro jugador puede recoger el botín** si llega a tiempo. Esto cumple "pierde todo" sin que sea injusto para el equipo.
 
 ### 5.3 Botín
@@ -134,7 +141,7 @@ src/
 │   │   ├── DataService.lua        # guardado de perfil y estadísticas
 │   │   ├── LobbyService.lua       # salas de espera y grupos
 │   │   ├── MatchmakingService.lua # teleport a servidor reservado
-│   │   ├── RunService.lua         # máquina de estados de la partida
+│   │   ├── MatchService.lua         # máquina de estados de la partida
 │   │   ├── MapService.lua         # genera el mapa con módulos
 │   │   ├── LootService.lua        # tablas de botín y colocación
 │   │   ├── InventoryService.lua   # inventario, soltar, pasar objetos
@@ -169,7 +176,7 @@ Reglas técnicas:
 
 | Persona | Responsable de |
 |---|---|
-| **Rafael** | `DataService`, `LobbyService`, `MatchmakingService`, `RunService`, `WaveService`, `BunkerService`, `ShopService`, `LobbyUi` |
+| **Rafael** | `DataService`, `LobbyService`, `MatchmakingService`, `MatchService`, `WaveService`, `BunkerService`, `ShopService`, `LobbyUi` |
 | **Axel** | `InventoryService`, `LootService`, `CombatService`, `SurvivalService`, `HudController`, `InventoryUi`, `WeaponController` |
 | **Compartido** | `ZombieService` y `NoiseService` (empezar juntos, luego repartir), `MapService` |
 
@@ -200,11 +207,12 @@ Es más largo que la meta original de 2 a 4 semanas. Si necesitan algo en 4 sema
 | Contenido para menores | Violencia moderada, sin gore, clasificación de edad correcta en la página del juego. |
 | Cajas aleatorias de pago | Mostrar probabilidades y cumplir las reglas de Roblox. |
 
-## 11. Preguntas abiertas
+## 11. Decisiones cerradas y preguntas abiertas
 
-1. ¿Se permite **levantar a un compañero caído** antes de que muera del todo? (Recomendado, mejora la cooperación.)
-2. ¿Habrá **progresión permanente ligera** (estadísticas y cosméticos)? (Recomendado.)
-3. ¿"Cambiar" ítems significa **pasar objetos entre jugadores**, **fabricar objetos con materiales**, o ambos?
-4. ¿El grupo mínimo para empezar es 2 jugadores, o siempre se espera a completar 3 o 4?
-5. ¿Qué nombre le ponemos?
-6. ¿Perspectiva en tercera persona estándar de Roblox, o primera persona opcional?
+Cerradas el 16 de octubre de 2026: levantar caído una sola vez, progresión ligera, fabricar y pasar objetos, inicio con 2 jugadores, tercera persona, nombre Last Refuge.
+
+Abiertas:
+
+1. Buscar en Roblox que el nombre *Last Refuge* esté libre.
+2. Definir el estilo visual (colores, niebla, interfaz) antes de la semana 3.
+3. Decidir si los infectados usan el avatar estándar de Roblox con ropa rota o un modelo propio.

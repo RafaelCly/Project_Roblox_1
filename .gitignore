@@ -1,0 +1,20 @@
+# Archivos de lugar de Roblox (se sincronizan con Rojo, no se versionan)
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+
+# Generados por Rojo y herramientas
+sourcemap.json
+Packages/
+ServerPackages/
+
+# Sistema y editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+
+# Secretos: nunca subir claves ni tokens
+.env
+*.key
