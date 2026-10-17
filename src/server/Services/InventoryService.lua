@@ -35,6 +35,10 @@ local function getSurvival()
 	return require(script.Parent.SurvivalService)
 end
 
+local function getCombat()
+	return require(script.Parent.CombatService)
+end
+
 local function notify(player: Player, text: string)
 	Remotes.get("Notify"):FireClient(player, text)
 end
@@ -42,6 +46,8 @@ end
 local function push(player: Player)
 	local inv = inventories[player]
 	if inv then
+		-- Si el arma equipada salió del inventario, se desequipa.
+		getCombat():SyncWithInventory(player)
 		Remotes.get("InventoryChanged"):FireClient(player, InventoryLogic.serialize(inv))
 	end
 end
@@ -78,12 +84,13 @@ function InventoryService:Count(player: Player, id: string): number
 end
 
 -- Devuelve el sobrante que no cupo.
-function InventoryService:AddItem(player: Player, id: string, count: number): number
+-- durability (opcional): desgaste de un arma que ya se usó.
+function InventoryService:AddItem(player: Player, id: string, count: number, durability: number?): number
 	local inv = inventories[player]
 	if not inv then
 		return count
 	end
-	local leftover = InventoryLogic.add(inv, id, count)
+	local leftover = InventoryLogic.add(inv, id, count, durability)
 	push(player)
 	return leftover
 end
@@ -98,6 +105,17 @@ function InventoryService:RemoveItem(player: Player, id: string, count: number):
 	return ok
 end
 
+-- Desgasta el arma `id` del jugador. Devuelve true si se rompió y salió del inventario.
+function InventoryService:WearWeapon(player: Player, id: string, amount: number, maxDurability: number): boolean
+	local inv = inventories[player]
+	if not inv then
+		return false
+	end
+	local _, broken = InventoryLogic.wear(inv, id, amount, maxDurability)
+	push(player)
+	return broken
+end
+
 -- Recoger un objeto del suelo. Lo que no cabe se queda en el suelo.
 function InventoryService:_collect(player: Player, pickup: BasePart): boolean
 	if not pickup.Parent or pickup:GetAttribute("Taken") then
@@ -109,7 +127,12 @@ function InventoryService:_collect(player: Player, pickup: BasePart): boolean
 		return false
 	end
 
-	local leftover = InventoryService:AddItem(player, id, count)
+	local durability = pickup:GetAttribute("Durability")
+	if typeof(durability) ~= "number" then
+		durability = nil
+	end
+
+	local leftover = InventoryService:AddItem(player, id, count, durability)
 	if leftover >= count then
 		notify(player, "Inventario lleno")
 		return false
@@ -123,7 +146,7 @@ function InventoryService:_collect(player: Player, pickup: BasePart): boolean
 	return true
 end
 
-function InventoryService:SpawnPickup(position: Vector3, id: string, count: number): BasePart
+function InventoryService:SpawnPickup(position: Vector3, id: string, count: number, durability: number?): BasePart
 	local config = Items[id]
 	assert(config, `Objeto desconocido: {id}`)
 
@@ -138,6 +161,7 @@ function InventoryService:SpawnPickup(position: Vector3, id: string, count: numb
 	part.Position = groundPosition(position + spread)
 	part:SetAttribute("ItemId", id)
 	part:SetAttribute("Count", count)
+	part:SetAttribute("Durability", durability)
 
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText = "Recoger"
@@ -161,9 +185,10 @@ function InventoryService:DropAll(player: Player, position: Vector3)
 	end
 	local dropped = 0
 	for i = 1, inv.slotCount do
+		local durability = inv.slots[i] and inv.slots[i].durability
 		local id, count = InventoryLogic.removeAt(inv, i)
 		if id then
-			InventoryService:SpawnPickup(position, id, count)
+			InventoryService:SpawnPickup(position, id, count, durability)
 			dropped += 1
 		end
 	end
@@ -177,11 +202,12 @@ function InventoryService:DropSlot(player: Player, slot): boolean
 	if not inv or not root or not validSlot(inv, slot) then
 		return false
 	end
+	local durability = inv.slots[slot] and inv.slots[slot].durability
 	local id, count = InventoryLogic.removeAt(inv, slot)
 	if not id then
 		return false
 	end
-	InventoryService:SpawnPickup(root.Position + root.CFrame.LookVector * 3, id, count)
+	InventoryService:SpawnPickup(root.Position + root.CFrame.LookVector * 3, id, count, durability)
 	push(player)
 	return true
 end
@@ -200,10 +226,22 @@ function InventoryService:UseSlot(player: Player, slot): boolean
 	if not Survival:IsAlive(player) then
 		return false
 	end
+	if Survival:IsDowned(player) then
+		notify(player, "Estás caído, no puedes usar objetos")
+		return false
+	end
 
 	local config = Items[stack.id]
 	local applied = false
-	if config.kind == "Food" then
+	if config.kind == "Weapon" then
+		-- Equipar no gasta el objeto. Usar el arma equipada otra vez la guarda.
+		local Combat = getCombat()
+		if Combat:GetEquipped(player) == stack.id then
+			Combat:Unequip(player)
+			return true
+		end
+		return Combat:Equip(player, stack.id)
+	elseif config.kind == "Food" then
 		applied = Survival:Feed(player, config.hunger)
 		if not applied then
 			notify(player, "No tienes hambre")
@@ -249,7 +287,7 @@ function InventoryService:GiveSlot(player: Player, slot, targetUserId): boolean
 	if not stack then
 		return false
 	end
-	local leftover = InventoryLogic.add(targetInv, stack.id, stack.count)
+	local leftover = InventoryLogic.add(targetInv, stack.id, stack.count, stack.durability)
 	local given = stack.count - leftover
 	if given == 0 then
 		notify(player, "Su inventario está lleno")
@@ -276,7 +314,7 @@ function InventoryService:Craft(player: Player, recipeId): boolean
 	-- Probar en una copia: si el resultado no cabe, no se gasta nada.
 	local copy = InventoryLogic.new(inv.slotCount)
 	for i, stack in inv.slots do
-		copy.slots[i] = { id = stack.id, count = stack.count }
+		copy.slots[i] = { id = stack.id, count = stack.count, durability = stack.durability }
 	end
 	for id, needed in recipe.inputs do
 		InventoryLogic.remove(copy, id, needed)

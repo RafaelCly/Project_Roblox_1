@@ -359,6 +359,306 @@ if Inventory and Survival and testPlayer then
 	Inventory:RemoveItem(testPlayer, "Pistol", 7)
 	Inventory:RemoveItem(testPlayer, "PistolAmmo", 30)
 
+	-- Equipar armas
+	section("Equipar armas")
+	local Combat = loaded.CombatService
+	local function visualCount()
+		local total = 0
+		for _, child in character:GetChildren() do
+			if child.Name == "EquippedWeaponVisual" then
+				total += 1
+			end
+		end
+		return total
+	end
+	check("sin arma al empezar", Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+	check("no se equipa un arma que no se tiene", Combat:Equip(testPlayer, "Bat") == false and Combat:GetEquipped(testPlayer) == nil)
+	check("no se equipa un objeto que no es arma", Combat:Equip(testPlayer, "Cloth") == false and Combat:Equip(testPlayer, "Inventada") == false and Combat:Equip(testPlayer, 5) == false)
+
+	Inventory:AddItem(testPlayer, "Bat", 1)
+	Inventory:AddItem(testPlayer, "Knife", 1)
+	check("usar una ranura de arma la equipa", Inventory:UseSlot(testPlayer, slotOf("Bat")) == true and Combat:GetEquipped(testPlayer) == "Bat")
+	check("equipar no gasta el arma", Inventory:Count(testPlayer, "Bat") == 1)
+	check("el arma equipada se ve en el personaje", visualCount() == 1)
+	check("el arma equipada se replica como atributo", testPlayer:GetAttribute("EquippedWeapon") == "Bat")
+	check("usar otra arma cambia la equipada y solo hay una", Inventory:UseSlot(testPlayer, slotOf("Knife")) == true and Combat:GetEquipped(testPlayer) == "Knife" and visualCount() == 1)
+	check("usar el arma equipada la guarda", Inventory:UseSlot(testPlayer, slotOf("Knife")) == true and Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+	check("guardar el arma limpia el atributo", testPlayer:GetAttribute("EquippedWeapon") == nil)
+
+	Combat:Equip(testPlayer, "Bat")
+	check("soltar el arma equipada la desequipa", Inventory:DropSlot(testPlayer, slotOf("Bat")) == true and Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+	Combat:Equip(testPlayer, "Knife")
+	Inventory:RemoveItem(testPlayer, "Knife", 1)
+	check("si el arma sale del inventario se desequipa", Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+	for _, pickup in pickups:GetChildren() do
+		if pickup:GetAttribute("ItemId") == "Bat" then
+			pickup:Destroy()
+		end
+	end
+
+	-- Cuerpo a cuerpo (puro)
+	section("Cuerpo a cuerpo")
+	local flatLook = Vector3.new(0, 0, -1)
+	local here = Vector3.new(0, 5, 0)
+	check("cono: objetivo al frente dentro del alcance", Combat.inMeleeCone(here, flatLook, Vector3.new(0, 5, -4), 5) == true)
+	check("cono: objetivo fuera del alcance", Combat.inMeleeCone(here, flatLook, Vector3.new(0, 5, -9), 5) == false)
+	check("cono: objetivo detrás", Combat.inMeleeCone(here, flatLook, Vector3.new(0, 5, 4), 5) == false)
+	check("cono: objetivo a 45 grados entra", Combat.inMeleeCone(here, flatLook, Vector3.new(3, 5, -3), 5) == true)
+	check("cono: objetivo a 90 grados no entra", Combat.inMeleeCone(here, flatLook, Vector3.new(4, 5, 0), 5) == false)
+	check("cono: ignora la altura", Combat.inMeleeCone(here, flatLook, Vector3.new(0, 20, -4), 5) == true)
+
+	local wearInv = Inv.new(2)
+	Inv.add(wearInv, "Bat", 1)
+	local left, broken = Inv.wear(wearInv, "Bat", 1, 60)
+	check("desgastar un arma entera baja 1", left == 59 and broken == false and wearInv.slots[1].durability == 59)
+	wearInv.slots[1].durability = 1
+	left, broken = Inv.wear(wearInv, "Bat", 1, 60)
+	check("al llegar a 0 el arma se rompe y sale de la ranura", left == 0 and broken == true and wearInv.slots[1] == nil)
+	check("desgastar un arma que no hay no hace nada", Inv.wear(wearInv, "Bat", 1, 60) == nil)
+	Inv.add(wearInv, "Knife", 1, 30)
+	check("un arma puede entrar con su desgaste", wearInv.slots[1].durability == 30)
+
+	-- Cuerpo a cuerpo (con el jugador, infectados falsos)
+	local damageLog = {}
+	Combat:SetZombieProvider({
+		FromInstance = function(_, instance)
+			local model = instance:FindFirstAncestorOfClass("Model")
+			return model and model:GetAttribute("TestZombie") and model or nil
+		end,
+		Damage = function(_, model, amount, source)
+			table.insert(damageLog, { model = model, amount = amount, source = source })
+			return false
+		end,
+	})
+	local noiseLog = {}
+	loaded.NoiseService:Subscribe(function(position, radius, source)
+		if source == testPlayer then
+			table.insert(noiseLog, radius)
+		end
+	end)
+
+	local root = character:WaitForChild("HumanoidRootPart")
+	local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
+	local function makeFakeZombie(offset: Vector3)
+		local model = Instance.new("Model")
+		model.Name = "FakeZombie"
+		model:SetAttribute("TestZombie", true)
+		local part = Instance.new("Part")
+		part.Name = "HumanoidRootPart"
+		part.Size = Vector3.new(2, 2, 1)
+		part.Anchored = true
+		part.CanCollide = false
+		part.Position = root.Position + offset
+		part.Parent = model
+		model.PrimaryPart = part
+		model.Parent = workspace
+		return model
+	end
+
+	Inventory:AddItem(testPlayer, "Bat", 1)
+	check("atacar sin arma equipada se rechaza", Combat:Attack(testPlayer, look) == false)
+	Combat:Equip(testPlayer, "Bat")
+	check("dirección inválida se rechaza", Combat:Attack(testPlayer, nil) == false and Combat:Attack(testPlayer, "norte") == false and Combat:Attack(testPlayer, Vector3.zero) == false and Combat:Attack(testPlayer, Vector3.new(0, 9, 0)) == false)
+
+	local front = makeFakeZombie(look * 3)
+	local behind = makeFakeZombie(-look * 3)
+	local far = makeFakeZombie(look * 30)
+	local ok, hits = Combat:Attack(testPlayer, look)
+	check("el golpe acierta solo al infectado frente al jugador", ok == true and hits == 1 and #damageLog == 1 and damageLog[1].model == front)
+	check("el golpe hace el daño del arma y avisa quién atacó", damageLog[1].amount == Weapons.Bat.damage and damageLog[1].source == testPlayer)
+	check("el golpe emite el ruido del arma", noiseLog[1] == Weapons.Bat.noiseRadius)
+	check("el bate pierde 1 de durabilidad por golpe", Inventory:Get(testPlayer).slots[slotOf("Bat")].durability == Weapons.Bat.durability - 1)
+
+	local okAgain, reason = Combat:Attack(testPlayer, look)
+	check("atacar antes del cooldown se rechaza", okAgain == false and reason == "cooldown" and #damageLog == 1)
+	task.wait(Weapons.Bat.cooldown + 0.1)
+	check("pasado el cooldown se puede atacar otra vez", Combat:Attack(testPlayer, look) == true and #damageLog == 2)
+	task.wait(Weapons.Bat.cooldown + 0.1)
+	local missOk, missHits = Combat:Attack(testPlayer, Vector3.new(look.Z, 0, -look.X))
+	check("un golpe al aire es válido pero no daña, y hace ruido", missOk == true and missHits == 0 and #noiseLog == 3)
+	for _, model in { front, behind, far } do
+		model:Destroy()
+	end
+
+	-- Un arma rota
+	Inventory:Get(testPlayer).slots[slotOf("Bat")].durability = 1
+	task.wait(Weapons.Bat.cooldown + 0.1)
+	check("el golpe que gasta la última durabilidad rompe el bate", Combat:Attack(testPlayer, look) == true and Inventory:Count(testPlayer, "Bat") == 0)
+	check("un bate roto queda desequipado", Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+
+	-- La durabilidad viaja con el arma
+	Inventory:AddItem(testPlayer, "Bat", 1, 7)
+	Inventory:DropSlot(testPlayer, slotOf("Bat"))
+	local droppedBat
+	for _, pickup in pickups:GetChildren() do
+		if pickup:GetAttribute("ItemId") == "Bat" then
+			droppedBat = pickup
+		end
+	end
+	check("al soltar un arma se guarda su durabilidad", droppedBat ~= nil and droppedBat:GetAttribute("Durability") == 7)
+	if droppedBat then
+		Inventory:_collect(testPlayer, droppedBat)
+		check("al recogerla conserva su durabilidad", Inventory:Get(testPlayer).slots[slotOf("Bat")].durability == 7)
+	end
+	Inventory:RemoveItem(testPlayer, "Bat", 1)
+
+	check("con las manos vacías no se puede atacar", Combat:Attack(testPlayer, look) == false)
+
+	-- Pistola, munición y recarga
+	section("Pistola")
+	local pistol = Weapons.Pistol
+	local aimOrigin = root.Position
+	local function shootAhead()
+		return Combat:Attack(testPlayer, look, aimOrigin)
+	end
+	local function waitCooldown()
+		task.wait(pistol.cooldown + 0.1)
+	end
+	local function waitReload()
+		task.wait(pistol.reloadTime + 0.2)
+	end
+
+	Inventory:AddItem(testPlayer, "Pistol", 1)
+	check("una pistola recién equipada tiene el cargador vacío", Combat:Equip(testPlayer, "Pistol") and Combat:GetMagazine(testPlayer) == 0 and testPlayer:GetAttribute("Magazine") == 0)
+	local noiseAtStart = #noiseLog
+	check("la pistola sin balas no dispara ni hace ruido", shootAhead() == false and #noiseLog == noiseAtStart)
+	check("recargar sin munición en el inventario se rechaza", Combat:Reload(testPlayer) == false)
+
+	Inventory:AddItem(testPlayer, "PistolAmmo", 20)
+	check("recargar empieza y marca que está recargando", Combat:Reload(testPlayer) == true and Combat:IsReloading(testPlayer) == true and testPlayer:GetAttribute("Reloading") == true)
+	check("no se dispara ni se recarga otra vez mientras recarga", Combat:Attack(testPlayer, look, aimOrigin) == false and Combat:Reload(testPlayer) == false)
+	waitReload()
+	check("al terminar, la recarga llena el cargador con la munición del inventario", Combat:GetMagazine(testPlayer) == pistol.magazineSize and Inventory:Count(testPlayer, "PistolAmmo") == 20 - pistol.magazineSize)
+	check("terminada la recarga se limpia el estado", Combat:IsReloading(testPlayer) == false and testPlayer:GetAttribute("Reloading") == nil and testPlayer:GetAttribute("Magazine") == pistol.magazineSize)
+	check("con el cargador lleno no se recarga", Combat:Reload(testPlayer) == false)
+
+	-- Un muro y dos infectados en línea: el rayo se detiene en lo primero que toca.
+	damageLog = {}
+	local noiseBefore = #noiseLog
+	local wall = Instance.new("Part")
+	wall.Anchored = true
+	wall.Size = Vector3.new(10, 10, 1)
+	wall.CFrame = CFrame.lookAt(root.Position + look * 6, root.Position + look * 7)
+	wall.Parent = workspace
+	local shotAtWall = makeFakeZombie(look * 12)
+	local okWall, hitsWall = shootAhead()
+	check("un muro frena el disparo", okWall == true and hitsWall == 0 and #damageLog == 0)
+	check("el disparo gasta una bala aunque no acierte", Combat:GetMagazine(testPlayer) == pistol.magazineSize - 1)
+	wall:Destroy()
+	waitCooldown()
+	local firstTarget = makeFakeZombie(look * 15)
+	local secondTarget = makeFakeZombie(look * 25)
+	local okShot, hitsShot = shootAhead()
+	check("el disparo acierta al primer infectado en línea", okShot == true and hitsShot == 1 and #damageLog == 1 and damageLog[1].model == shotAtWall)
+	check("el disparo hace el daño de la pistola y avisa quién disparó", damageLog[1].amount == pistol.damage and damageLog[1].source == testPlayer)
+	check("el disparo hace mucho ruido", #noiseLog == noiseBefore + 2 and noiseLog[#noiseLog] == pistol.noiseRadius)
+	check("disparar antes del cooldown se rechaza", shootAhead() == false)
+	shotAtWall:Destroy()
+	waitCooldown()
+	okShot, hitsShot = shootAhead()
+	check("sin el primero, el rayo alcanza al siguiente", okShot == true and damageLog[2].model == firstTarget)
+	for _, model in { firstTarget, secondTarget } do
+		model:Destroy()
+	end
+
+	-- Entradas inválidas del cliente
+	waitCooldown()
+	local bullets = Combat:GetMagazine(testPlayer)
+	check("dirección inválida del disparo se rechaza", Combat:Attack(testPlayer, nil, aimOrigin) == false and Combat:Attack(testPlayer, Vector3.zero, aimOrigin) == false and Combat:Attack(testPlayer, "norte", aimOrigin) == false)
+	check("origen inválido del disparo se rechaza", Combat:Attack(testPlayer, look, nil) == false and Combat:Attack(testPlayer, look, root.Position + Vector3.new(500, 0, 0)) == false and Combat:Attack(testPlayer, look, Vector3.new(0 / 0, 0, 0)) == false)
+	check("un disparo rechazado no gasta balas", Combat:GetMagazine(testPlayer) == bullets)
+
+	-- Última bala y recarga parcial
+	Combat:_setMagazine(testPlayer, "Pistol", 1)
+	check("la última bala dispara", shootAhead() == true and Combat:GetMagazine(testPlayer) == 0)
+	waitCooldown()
+	check("con el cargador vacío ya no dispara", shootAhead() == false)
+
+	Combat:_setMagazine(testPlayer, "Pistol", 10)
+	local ammoBefore = Inventory:Count(testPlayer, "PistolAmmo")
+	Combat:Reload(testPlayer)
+	waitReload()
+	check("la recarga respeta el tamaño del cargador", Combat:GetMagazine(testPlayer) == pistol.magazineSize and Inventory:Count(testPlayer, "PistolAmmo") == ammoBefore - 2)
+
+	Combat:_setMagazine(testPlayer, "Pistol", 0)
+	Inventory:RemoveItem(testPlayer, "PistolAmmo", Inventory:Count(testPlayer, "PistolAmmo") - 3)
+	Combat:Reload(testPlayer)
+	waitReload()
+	check("con poca munición se carga solo lo que hay", Combat:GetMagazine(testPlayer) == 3 and Inventory:Count(testPlayer, "PistolAmmo") == 0)
+
+	-- Cambiar de arma cancela la recarga
+	Inventory:AddItem(testPlayer, "PistolAmmo", 5)
+	Combat:_setMagazine(testPlayer, "Pistol", 0)
+	Combat:Reload(testPlayer)
+	Combat:Unequip(testPlayer)
+	check("guardar el arma cancela la recarga", Combat:IsReloading(testPlayer) == false and testPlayer:GetAttribute("Reloading") == nil and testPlayer:GetAttribute("Magazine") == nil)
+	waitReload()
+	check("la recarga cancelada no gasta munición", Inventory:Count(testPlayer, "PistolAmmo") == 5)
+	check("el cargador se recuerda al volver a equipar", Combat:Equip(testPlayer, "Pistol") and Combat:GetMagazine(testPlayer) == 0)
+	Inventory:RemoveItem(testPlayer, "Pistol", 1)
+	Inventory:RemoveItem(testPlayer, "PistolAmmo", 5)
+
+	Combat:SetZombieProvider(nil)
+
+	-- Caído y levantar
+	section("Caído y levantar")
+	-- Un compañero falso: solo hace falta un personaje con vida y una posición.
+	local function makeFakeHelper(at: Vector3, health: number)
+		local model = Instance.new("Model")
+		model.Name = "FakeHelper"
+		local fakeHumanoid = Instance.new("Humanoid")
+		fakeHumanoid.Parent = model
+		local part = Instance.new("Part")
+		part.Name = "HumanoidRootPart"
+		part.Anchored = true
+		part.CanCollide = false
+		part.Position = at
+		part.Parent = model
+		model.Parent = workspace
+		fakeHumanoid.Health = health
+		return { Character = model, DisplayName = "Ayudante", Name = "Ayudante" }, model
+	end
+
+	local baseWalkSpeed = humanoid.WalkSpeed
+	check("empieza sin estar caído", Survival:IsDowned(testPlayer) == false and testPlayer:GetAttribute("Downed") == nil)
+	humanoid.Health = humanoid.MaxHealth
+	check("un daño que no mata solo resta vida", Survival:Damage(testPlayer, 30, nil) == "hurt" and humanoid.Health == 70)
+	check("un daño inválido se ignora", Survival:Damage(testPlayer, -5, nil) == "ignored" and Survival:Damage(testPlayer, 0, nil) == "ignored" and Survival:Damage(testPlayer, "mucho", nil) == "ignored" and Survival:Damage(testPlayer, 0 / 0, nil) == "ignored" and humanoid.Health == 70)
+
+	Inventory:AddItem(testPlayer, "Bat", 1)
+	Inventory:AddItem(testPlayer, "Bandage", 1)
+	Combat:Equip(testPlayer, "Bat")
+	check("el daño mortal por primera vez deja al jugador caído, no muerto", Survival:Damage(testPlayer, 500, nil) == "downed" and Survival:IsDowned(testPlayer) == true and humanoid.Health == 1)
+	check("el caído camina lento", humanoid.WalkSpeed == SurvivalConfig.DOWNED_WALK_SPEED)
+	local endsAt = testPlayer:GetAttribute("DownedEndsAt")
+	check("se avisa al cliente con los atributos Downed y DownedEndsAt", testPlayer:GetAttribute("Downed") == true and type(endsAt) == "number" and endsAt - workspace:GetServerTimeNow() > RunConfig.DOWNED_SECONDS - 2)
+	local revivePrompt = root:FindFirstChild("RevivePrompt")
+	check("el caído tiene el botón Levantar de 3 segundos a 6 studs", revivePrompt ~= nil and revivePrompt.HoldDuration == SurvivalConfig.REVIVE_HOLD_SECONDS and revivePrompt.MaxActivationDistance == SurvivalConfig.REVIVE_DISTANCE)
+	check("el caído guarda el arma y no puede atacar", Combat:GetEquipped(testPlayer) == nil and Combat:Attack(testPlayer, look, aimOrigin) == false)
+	check("el caído no puede equipar armas", Combat:Equip(testPlayer, "Bat") == false)
+	check("el caído no puede usar objetos", Inventory:UseSlot(testPlayer, slotOf("Bandage")) == false and Inventory:Count(testPlayer, "Bandage") == 1 and humanoid.Health == 1)
+	check("un caído no se cura solo", Survival:Heal(testPlayer, 30) == false and humanoid.Health == 1)
+	Survival:SetHunger(testPlayer, 0)
+	task.wait(2.2)
+	check("un caído no muere de hambre", Survival:IsDowned(testPlayer) == true and humanoid.Health == 1)
+	Survival:SetHunger(testPlayer, 100)
+
+	local farHelper, farModel = makeFakeHelper(root.Position + Vector3.new(40, 0, 0), 100)
+	local deadHelper, deadModel = makeFakeHelper(root.Position + Vector3.new(2, 0, 0), 0)
+	check("no se puede levantar a sí mismo", Survival:Revive(testPlayer, testPlayer) == false)
+	check("no levanta un compañero lejos", Survival:Revive(farHelper, testPlayer) == false)
+	check("no levanta un compañero muerto", Survival:Revive(deadHelper, testPlayer) == false and Survival:IsDowned(testPlayer) == true)
+	local nearHelper, nearModel = makeFakeHelper(root.Position + Vector3.new(3, 0, 0), 100)
+	check("un compañero cerca lo levanta con 30 de vida", Survival:Revive(nearHelper, testPlayer) == true and Survival:IsDowned(testPlayer) == false and humanoid.Health == SurvivalConfig.REVIVE_HEALTH)
+	check("al levantarse recupera la velocidad y se limpia el estado", humanoid.WalkSpeed == baseWalkSpeed and testPlayer:GetAttribute("Downed") == nil and testPlayer:GetAttribute("DownedEndsAt") == nil and root:FindFirstChild("RevivePrompt") == nil)
+	check("levantar a quien no está caído se rechaza", Survival:Revive(nearHelper, testPlayer) == false)
+	for _, model in { farModel, deadModel, nearModel } do
+		model:Destroy()
+	end
+	Inventory:RemoveItem(testPlayer, "Bat", 1)
+	Inventory:RemoveItem(testPlayer, "Bandage", 1)
+	humanoid.Health = humanoid.MaxHealth
+
 	-- Morir suelta todo
 	Inventory:AddItem(testPlayer, "CannedFood", 2)
 	Inventory:AddItem(testPlayer, "Bat", 1)
@@ -367,6 +667,56 @@ if Inventory and Survival and testPlayer then
 	task.wait(1)
 	check("al morir se suelta todo el inventario", Inventory:Count(testPlayer, "CannedFood") == 0 and Inventory:Count(testPlayer, "Bat") == 0)
 	check("lo soltado al morir queda en el suelo para el equipo", #pickups:GetChildren() == pickupsBeforeDeath + 2)
+
+	-- Caído: casos que terminan en muerte. Cada uno necesita un personaje nuevo.
+	section("Caído: casos mortales")
+	local previousRespawn = Players.RespawnTime
+	Players.RespawnTime = 1
+	local function nextCharacter()
+		local old = testPlayer.Character
+		local deadline = os.clock() + 20
+		repeat
+			task.wait(0.25)
+			local current = testPlayer.Character
+		until os.clock() > deadline or (current ~= nil and current ~= old and current:FindFirstChild("HumanoidRootPart") ~= nil and current:FindFirstChildOfClass("Humanoid") ~= nil)
+		task.wait(1.6) -- deja que los servicios preparen al jugador
+		return testPlayer.Character
+	end
+
+	local life = nextCharacter()
+	local lifeHumanoid = life and life:FindFirstChildOfClass("Humanoid")
+	local lifeRoot = life and life:FindFirstChild("HumanoidRootPart")
+	check("el jugador reaparece con vida completa", lifeHumanoid ~= nil and lifeRoot ~= nil and life ~= character and lifeHumanoid.Health == lifeHumanoid.MaxHealth)
+	if lifeHumanoid and lifeRoot then
+		check("un personaje nuevo no está caído", Survival:IsDowned(testPlayer) == false)
+		Survival:Damage(testPlayer, 500, nil)
+		local helper = makeFakeHelper(lifeRoot.Position + Vector3.new(3, 0, 0), 100)
+		check("levantar devuelve al jugador a 30 de vida", Survival:Revive(helper, testPlayer) == true and lifeHumanoid.Health == SurvivalConfig.REVIVE_HEALTH)
+		check("la segunda caída es mortal", Survival:Damage(testPlayer, 500, nil) == "dead" and lifeHumanoid.Health <= 0 and Survival:IsDowned(testPlayer) == false)
+		helper.Character:Destroy()
+	end
+
+	-- Un caído al que vuelven a golpear muere.
+	life = nextCharacter()
+	lifeHumanoid = life and life:FindFirstChildOfClass("Humanoid")
+	if lifeHumanoid then
+		Survival:Damage(testPlayer, 500, nil)
+		check("un caído que recibe más daño muere", Survival:Damage(testPlayer, 1, nil) == "dead" and lifeHumanoid.Health <= 0 and Survival:IsDowned(testPlayer) == false)
+	end
+
+	-- Un caído sin ayuda muere al agotar el tiempo.
+	life = nextCharacter()
+	lifeHumanoid = life and life:FindFirstChildOfClass("Humanoid")
+	if lifeHumanoid then
+		local previousSeconds = RunConfig.DOWNED_SECONDS
+		RunConfig.DOWNED_SECONDS = 1
+		Survival:Damage(testPlayer, 500, nil)
+		check("el caído espera ayuda mientras corre el tiempo", Survival:IsDowned(testPlayer) == true and lifeHumanoid.Health == 1)
+		task.wait(1.5)
+		check("un caído sin ayuda muere al agotar el tiempo", Survival:IsDowned(testPlayer) == false and lifeHumanoid.Health <= 0)
+		RunConfig.DOWNED_SECONDS = previousSeconds
+	end
+	Players.RespawnTime = previousRespawn
 else
 	warn("[Test] FAIL no hay jugador para las pruebas de integración")
 	failed += 1

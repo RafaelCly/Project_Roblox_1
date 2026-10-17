@@ -24,7 +24,8 @@ end
 
 -- Agrega objetos: primero rellena pilas existentes y luego usa ranuras vacías.
 -- Devuelve el SOBRANTE (0 si todo entró).
-function InventoryLogic.add(inv, id: string, count: number): number
+-- durability (opcional) es el desgaste de un arma: solo se guarda en pilas nuevas.
+function InventoryLogic.add(inv, id: string, count: number, durability: number?): number
 	local config = Items[id]
 	assert(config, `Objeto desconocido: {id}`)
 
@@ -44,7 +45,7 @@ function InventoryLogic.add(inv, id: string, count: number): number
 	for i = 1, inv.slotCount do
 		if not inv.slots[i] then
 			local moved = math.min(config.stackMax, remaining)
-			inv.slots[i] = { id = id, count = moved }
+			inv.slots[i] = { id = id, count = moved, durability = durability }
 			remaining -= moved
 			if remaining == 0 then
 				return 0
@@ -95,6 +96,25 @@ function InventoryLogic.removeAt(inv, index: number, count: number?)
 	return id, taken
 end
 
+-- Desgasta el primer arma con ese id. Una arma sin desgaste guardado está entera
+-- (maxDurability). Devuelve la durabilidad restante y si se rompió (la ranura se vacía).
+-- Devuelve nil si no hay ninguna.
+function InventoryLogic.wear(inv, id: string, amount: number, maxDurability: number)
+	for i = 1, inv.slotCount do
+		local slot = inv.slots[i]
+		if slot and slot.id == id then
+			local left = (slot.durability or maxDurability) - amount
+			if left <= 0 then
+				inv.slots[i] = nil
+				return 0, true
+			end
+			slot.durability = left
+			return left, false
+		end
+	end
+	return nil, false
+end
+
 function InventoryLogic.canCraft(inv, recipe): boolean
 	for id, needed in recipe.inputs do
 		if InventoryLogic.count(inv, id) < needed then
@@ -109,7 +129,7 @@ function InventoryLogic.serialize(inv)
 	local list = {}
 	for i = 1, inv.slotCount do
 		local slot = inv.slots[i]
-		list[i] = slot and { id = slot.id, count = slot.count } or {}
+		list[i] = slot and { id = slot.id, count = slot.count, durability = slot.durability } or {}
 	end
 	return list
 end
