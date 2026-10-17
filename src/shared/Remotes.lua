@@ -29,6 +29,8 @@ local EVENT_NAMES = {
 
 local Remotes = {}
 
+Remotes.Names = EVENT_NAMES
+
 if RunService:IsServer() then
 	local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME)
 	if not folder then
