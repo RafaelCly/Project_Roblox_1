@@ -710,4 +710,66 @@ else
 	failed += 1
 end
 
+-- Infectados: golpes y bajas -----------------------------------------------------------
+section("Infectados: golpes y bajas")
+local hitCharacter, hitHumanoid, hitRoot = waitForAlivePlayer(20)
+local DataSvc = loaded.DataService
+if ZombieSvc and DataSvc and hitCharacter then
+	task.wait(1)
+	local base3 = hitRoot.Position
+	local function stateIsAlert(model)
+		local s = ZombieSvc:GetState(model)
+		return s == "Chase" or s == "Attack"
+	end
+
+	-- Un golpe alerta a un infectado que no veía al jugador (de espaldas y a 25 studs).
+	local sleeper = ZombieSvc:Spawn("Walker", base3 + Vector3.new(0, 0, 25))
+	local sleeperPosition = sleeper.HumanoidRootPart.Position
+	sleeper:PivotTo(CFrame.lookAt(sleeperPosition, sleeperPosition + Vector3.new(0, 0, 10)))
+	task.wait(0.6)
+	check("antes del golpe, de espaldas y lejos, no está alerta", not stateIsAlert(sleeper), tostring(ZombieSvc:GetState(sleeper)))
+	check("un golpe no letal devuelve false", ZombieSvc:Damage(sleeper, 10, testPlayer) == false)
+	check("el golpe lo alerta y persigue", ZombieSvc:GetState(sleeper) == "Chase", tostring(ZombieSvc:GetState(sleeper)))
+	local lookVector = sleeper.HumanoidRootPart.CFrame.LookVector
+	local toPlayer = Vector3.new(base3.X - sleeperPosition.X, 0, base3.Z - sleeperPosition.Z).Unit
+	check("al ser golpeado se gira hacia quien lo golpeó", lookVector:Dot(toPlayer) > 0.9)
+
+	-- Sin jugador que lo golpee (daño ambiental), no se alerta.
+	local quiet = ZombieSvc:Spawn("Walker", base3 + Vector3.new(0, 0, -25))
+	local quietPosition = quiet.HumanoidRootPart.Position
+	quiet:PivotTo(CFrame.lookAt(quietPosition, quietPosition + Vector3.new(0, 0, -10)))
+	ZombieSvc:Damage(quiet, 10, nil)
+	check("un daño sin jugador no lo alerta", not stateIsAlert(quiet), tostring(ZombieSvc:GetState(quiet)))
+
+	-- Aviso de muerte y estadísticas.
+	local killed = {}
+	ZombieSvc:OnKilled(function(model, killer, typeId)
+		table.insert(killed, { model = model, killer = killer, typeId = typeId })
+	end)
+	local profile = DataSvc:Get(testPlayer)
+	local killsBefore = profile.stats.zombiesKilled
+	check("un golpe letal devuelve true", ZombieSvc:Damage(sleeper, 9999, testPlayer) == true)
+	task.wait(0.2)
+	check("OnKilled avisa con el modelo, quien mató y el tipo", #killed == 1 and killed[1].model == sleeper and killed[1].killer == testPlayer and killed[1].typeId == "Walker")
+	check("la baja suma a las estadísticas del jugador", profile.stats.zombiesKilled == killsBefore + 1)
+
+	ZombieSvc:Damage(quiet, 9999, nil)
+	task.wait(0.2)
+	check("una muerte sin jugador avisa con killer nil", #killed == 2 and killed[2].killer == nil)
+	check("una muerte sin jugador no suma estadísticas", profile.stats.zombiesKilled == killsBefore + 1)
+	check("un infectado muerto no vuelve a avisar", ZombieSvc:Damage(sleeper, 10, testPlayer) == false and #killed == 2)
+
+	-- Limpieza
+	hitHumanoid.Health = hitHumanoid.MaxHealth
+	for _, child in workspace.Zombies:GetChildren() do
+		if ZombieSvc:GetRecord(child) then
+			ZombieSvc:Damage(child, 99999, nil)
+		end
+	end
+	check("tras limpiar no quedan infectados vivos (golpes)", ZombieSvc:CountActive() == 0)
+else
+	warn("[Test] FAIL no hay jugador vivo para probar golpes y bajas")
+	failed += 1
+end
+
 print(`[Test] RESULTADO: {passed} PASS, {failed} FAIL`)

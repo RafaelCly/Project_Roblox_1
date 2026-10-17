@@ -27,6 +27,7 @@ local SKIN_COLOR = Color3.fromRGB(105, 135, 85)
 local CLOTH_COLOR = Color3.fromRGB(70, 70, 75)
 
 local zombies = {} -- [Model] = registro
+local killListeners = {}
 local activeCount = 0
 local zombieFolder = nil
 local template = nil
@@ -301,6 +302,20 @@ local function kill(record)
 	record.dead = true
 	activeCount -= 1
 	record.humanoid.Health = 0
+
+	-- Aviso de muerte: quien mató es el último jugador que lo golpeó (puede ser nil).
+	local killer = record.lastAttacker
+	if typeof(killer) == "Instance" and killer:IsA("Player") and killer.Parent then
+		local ok, DataService = pcall(require, script.Parent.DataService)
+		if ok then
+			DataService:Update(killer, function(profile)
+				profile.stats.zombiesKilled += 1
+			end)
+		end
+	end
+	for _, callback in killListeners do
+		task.spawn(callback, record.model, killer, record.typeId)
+	end
 	task.delay(CORPSE_SECONDS, function()
 		zombies[record.model] = nil
 		record.model:Destroy()
@@ -395,7 +410,27 @@ function ZombieService:Damage(model: Instance, amount: number, source: Player?):
 		return true
 	end
 	record.humanoid.Health = newHealth
+
+	-- Un golpe lo alerta: se gira hacia quien lo golpeó y lo persigue,
+	-- aunque no lo viera (de espaldas, fuera del cono, a oscuras...).
+	local state = record.state
+	local sourceRoot = typeof(source) == "Instance" and source:IsA("Player") and source.Character and source.Character:FindFirstChild("HumanoidRootPart")
+	if sourceRoot and state ~= "Chase" and state ~= "Attack" then
+		local now = os.clock()
+		local position = record.root.Position
+		record.root.CFrame = CFrame.lookAt(position, Vector3.new(sourceRoot.Position.X, position.Y, sourceRoot.Position.Z))
+		record.target = source
+		record.lastSeenPosition = sourceRoot.Position
+		record.lastSeenAt = now
+		enterState(record, "Chase", now)
+	end
 	return false
+end
+
+-- Registra una función que se llama cada vez que muere un infectado:
+-- callback(modelo, jugadorQueLoMató | nil, tipo). La usarán oleadas y estadísticas.
+function ZombieService:OnKilled(callback)
+	table.insert(killListeners, callback)
 end
 
 -- Dado cualquier objeto (una parte golpeada, un accesorio...), devuelve el modelo
