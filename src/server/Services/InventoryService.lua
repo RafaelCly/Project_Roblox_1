@@ -226,6 +226,10 @@ function InventoryService:UseSlot(player: Player, slot): boolean
 	if not Survival:IsAlive(player) then
 		return false
 	end
+	if Survival:IsDowned(player) then
+		notify(player, "Estás caído, no puedes usar objetos")
+		return false
+	end
 
 	local config = Items[stack.id]
 	local applied = false

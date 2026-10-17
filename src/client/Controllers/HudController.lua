@@ -138,6 +138,44 @@ function HudController:Start()
 		refreshAmmo()
 	end)
 
+	-- Caído: aviso grande con la cuenta regresiva para que un compañero te levante.
+	local downedLabel = Instance.new("TextLabel")
+	downedLabel.Name = "Downed"
+	downedLabel.AnchorPoint = Vector2.new(0.5, 0)
+	downedLabel.Position = UDim2.new(0.5, 0, 0, 140)
+	downedLabel.Size = UDim2.fromOffset(420, 64)
+	downedLabel.BackgroundColor3 = Color3.fromRGB(60, 10, 10)
+	downedLabel.BackgroundTransparency = 0.2
+	downedLabel.BorderSizePixel = 0
+	downedLabel.Font = Enum.Font.GothamBold
+	downedLabel.TextSize = 22
+	downedLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
+	downedLabel.Visible = false
+	downedLabel.Parent = gui
+
+	local downedCorner = Instance.new("UICorner")
+	downedCorner.CornerRadius = UDim.new(0, 8)
+	downedCorner.Parent = downedLabel
+
+	local function refreshDowned()
+		local isDowned = localPlayer:GetAttribute("Downed") == true
+		downedLabel.Visible = isDowned
+		if not isDowned then
+			return
+		end
+		task.spawn(function()
+			-- Mientras siga caído, actualiza el tiempo que queda.
+			while localPlayer:GetAttribute("Downed") == true do
+				local endsAt = localPlayer:GetAttribute("DownedEndsAt") or 0
+				local seconds = math.max(0, math.ceil(endsAt - workspace:GetServerTimeNow()))
+				downedLabel.Text = `Estás caído, espera ayuda\n{seconds} s`
+				task.wait(0.2)
+			end
+		end)
+	end
+	localPlayer:GetAttributeChangedSignal("Downed"):Connect(refreshDowned)
+	refreshDowned()
+
 	local messageId = 0
 
 	Remotes.get("SurvivalChanged").OnClientEvent:Connect(function(health, maxHealth, hunger, maxHunger)

@@ -600,6 +600,65 @@ if Inventory and Survival and testPlayer then
 
 	Combat:SetZombieProvider(nil)
 
+	-- Caído y levantar
+	section("Caído y levantar")
+	-- Un compañero falso: solo hace falta un personaje con vida y una posición.
+	local function makeFakeHelper(at: Vector3, health: number)
+		local model = Instance.new("Model")
+		model.Name = "FakeHelper"
+		local fakeHumanoid = Instance.new("Humanoid")
+		fakeHumanoid.Parent = model
+		local part = Instance.new("Part")
+		part.Name = "HumanoidRootPart"
+		part.Anchored = true
+		part.CanCollide = false
+		part.Position = at
+		part.Parent = model
+		model.Parent = workspace
+		fakeHumanoid.Health = health
+		return { Character = model, DisplayName = "Ayudante", Name = "Ayudante" }, model
+	end
+
+	local baseWalkSpeed = humanoid.WalkSpeed
+	check("empieza sin estar caído", Survival:IsDowned(testPlayer) == false and testPlayer:GetAttribute("Downed") == nil)
+	humanoid.Health = humanoid.MaxHealth
+	check("un daño que no mata solo resta vida", Survival:Damage(testPlayer, 30, nil) == "hurt" and humanoid.Health == 70)
+	check("un daño inválido se ignora", Survival:Damage(testPlayer, -5, nil) == "ignored" and Survival:Damage(testPlayer, 0, nil) == "ignored" and Survival:Damage(testPlayer, "mucho", nil) == "ignored" and Survival:Damage(testPlayer, 0 / 0, nil) == "ignored" and humanoid.Health == 70)
+
+	Inventory:AddItem(testPlayer, "Bat", 1)
+	Inventory:AddItem(testPlayer, "Bandage", 1)
+	Combat:Equip(testPlayer, "Bat")
+	check("el daño mortal por primera vez deja al jugador caído, no muerto", Survival:Damage(testPlayer, 500, nil) == "downed" and Survival:IsDowned(testPlayer) == true and humanoid.Health == 1)
+	check("el caído camina lento", humanoid.WalkSpeed == SurvivalConfig.DOWNED_WALK_SPEED)
+	local endsAt = testPlayer:GetAttribute("DownedEndsAt")
+	check("se avisa al cliente con los atributos Downed y DownedEndsAt", testPlayer:GetAttribute("Downed") == true and type(endsAt) == "number" and endsAt - workspace:GetServerTimeNow() > RunConfig.DOWNED_SECONDS - 2)
+	local revivePrompt = root:FindFirstChild("RevivePrompt")
+	check("el caído tiene el botón Levantar de 3 segundos a 6 studs", revivePrompt ~= nil and revivePrompt.HoldDuration == SurvivalConfig.REVIVE_HOLD_SECONDS and revivePrompt.MaxActivationDistance == SurvivalConfig.REVIVE_DISTANCE)
+	check("el caído guarda el arma y no puede atacar", Combat:GetEquipped(testPlayer) == nil and Combat:Attack(testPlayer, look, aimOrigin) == false)
+	check("el caído no puede equipar armas", Combat:Equip(testPlayer, "Bat") == false)
+	check("el caído no puede usar objetos", Inventory:UseSlot(testPlayer, slotOf("Bandage")) == false and Inventory:Count(testPlayer, "Bandage") == 1 and humanoid.Health == 1)
+	check("un caído no se cura solo", Survival:Heal(testPlayer, 30) == false and humanoid.Health == 1)
+	Survival:SetHunger(testPlayer, 0)
+	task.wait(2.2)
+	check("un caído no muere de hambre", Survival:IsDowned(testPlayer) == true and humanoid.Health == 1)
+	Survival:SetHunger(testPlayer, 100)
+
+	local farHelper, farModel = makeFakeHelper(root.Position + Vector3.new(40, 0, 0), 100)
+	local deadHelper, deadModel = makeFakeHelper(root.Position + Vector3.new(2, 0, 0), 0)
+	check("no se puede levantar a sí mismo", Survival:Revive(testPlayer, testPlayer) == false)
+	check("no levanta un compañero lejos", Survival:Revive(farHelper, testPlayer) == false)
+	check("no levanta un compañero muerto", Survival:Revive(deadHelper, testPlayer) == false and Survival:IsDowned(testPlayer) == true)
+	local nearHelper, nearModel = makeFakeHelper(root.Position + Vector3.new(3, 0, 0), 100)
+	check("un compañero cerca lo levanta con 30 de vida", Survival:Revive(nearHelper, testPlayer) == true and Survival:IsDowned(testPlayer) == false and humanoid.Health == SurvivalConfig.REVIVE_HEALTH)
+	check("al levantarse recupera la velocidad y se limpia el estado", humanoid.WalkSpeed == baseWalkSpeed and testPlayer:GetAttribute("Downed") == nil and testPlayer:GetAttribute("DownedEndsAt") == nil and root:FindFirstChild("RevivePrompt") == nil)
+	check("levantar a quien no está caído se rechaza", Survival:Revive(nearHelper, testPlayer) == false)
+	for _, model in { farModel, deadModel, nearModel } do
+		model:Destroy()
+	end
+	Inventory:RemoveItem(testPlayer, "Bat", 1)
+	Inventory:RemoveItem(testPlayer, "Bandage", 1)
+	humanoid.Health = humanoid.MaxHealth
+
 	-- Morir suelta todo
 	Inventory:AddItem(testPlayer, "CannedFood", 2)
 	Inventory:AddItem(testPlayer, "Bat", 1)
@@ -608,6 +667,56 @@ if Inventory and Survival and testPlayer then
 	task.wait(1)
 	check("al morir se suelta todo el inventario", Inventory:Count(testPlayer, "CannedFood") == 0 and Inventory:Count(testPlayer, "Bat") == 0)
 	check("lo soltado al morir queda en el suelo para el equipo", #pickups:GetChildren() == pickupsBeforeDeath + 2)
+
+	-- Caído: casos que terminan en muerte. Cada uno necesita un personaje nuevo.
+	section("Caído: casos mortales")
+	local previousRespawn = Players.RespawnTime
+	Players.RespawnTime = 1
+	local function nextCharacter()
+		local old = testPlayer.Character
+		local deadline = os.clock() + 20
+		repeat
+			task.wait(0.25)
+			local current = testPlayer.Character
+		until os.clock() > deadline or (current ~= nil and current ~= old and current:FindFirstChild("HumanoidRootPart") ~= nil and current:FindFirstChildOfClass("Humanoid") ~= nil)
+		task.wait(1.6) -- deja que los servicios preparen al jugador
+		return testPlayer.Character
+	end
+
+	local life = nextCharacter()
+	local lifeHumanoid = life and life:FindFirstChildOfClass("Humanoid")
+	local lifeRoot = life and life:FindFirstChild("HumanoidRootPart")
+	check("el jugador reaparece con vida completa", lifeHumanoid ~= nil and lifeRoot ~= nil and life ~= character and lifeHumanoid.Health == lifeHumanoid.MaxHealth)
+	if lifeHumanoid and lifeRoot then
+		check("un personaje nuevo no está caído", Survival:IsDowned(testPlayer) == false)
+		Survival:Damage(testPlayer, 500, nil)
+		local helper = makeFakeHelper(lifeRoot.Position + Vector3.new(3, 0, 0), 100)
+		check("levantar devuelve al jugador a 30 de vida", Survival:Revive(helper, testPlayer) == true and lifeHumanoid.Health == SurvivalConfig.REVIVE_HEALTH)
+		check("la segunda caída es mortal", Survival:Damage(testPlayer, 500, nil) == "dead" and lifeHumanoid.Health <= 0 and Survival:IsDowned(testPlayer) == false)
+		helper.Character:Destroy()
+	end
+
+	-- Un caído al que vuelven a golpear muere.
+	life = nextCharacter()
+	lifeHumanoid = life and life:FindFirstChildOfClass("Humanoid")
+	if lifeHumanoid then
+		Survival:Damage(testPlayer, 500, nil)
+		check("un caído que recibe más daño muere", Survival:Damage(testPlayer, 1, nil) == "dead" and lifeHumanoid.Health <= 0 and Survival:IsDowned(testPlayer) == false)
+	end
+
+	-- Un caído sin ayuda muere al agotar el tiempo.
+	life = nextCharacter()
+	lifeHumanoid = life and life:FindFirstChildOfClass("Humanoid")
+	if lifeHumanoid then
+		local previousSeconds = RunConfig.DOWNED_SECONDS
+		RunConfig.DOWNED_SECONDS = 1
+		Survival:Damage(testPlayer, 500, nil)
+		check("el caído espera ayuda mientras corre el tiempo", Survival:IsDowned(testPlayer) == true and lifeHumanoid.Health == 1)
+		task.wait(1.5)
+		check("un caído sin ayuda muere al agotar el tiempo", Survival:IsDowned(testPlayer) == false and lifeHumanoid.Health <= 0)
+		RunConfig.DOWNED_SECONDS = previousSeconds
+	end
+	Players.RespawnTime = previousRespawn
 else
 	warn("[Test] FAIL no hay jugador para las pruebas de integración")
 	failed += 1

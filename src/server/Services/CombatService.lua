@@ -161,6 +161,9 @@ function CombatService:Equip(player: Player, itemId): boolean
 	if not humanoid or humanoid.Health <= 0 then
 		return false
 	end
+	if require(script.Parent.SurvivalService):IsDowned(player) then
+		return false
+	end
 
 	cancelReload(player)
 	removeVisual(player)
