@@ -42,4 +42,8 @@ for name, service in services do
 	end
 end
 
-print("[Last Refuge] Servidor iniciado con servicios:", #servicesFolder:GetChildren())
+local loadedCount = 0
+for _ in services do
+	loadedCount += 1
+end
+print(`[Last Refuge] Servidor iniciado con servicios: {loadedCount}/{#servicesFolder:GetChildren()}`)

@@ -13,8 +13,27 @@ local STORE_NAME = "PlayerProfile_v1"
 local AUTOSAVE_SECONDS = 120
 local MAX_ATTEMPTS = 3
 
-local store = DataStoreService:GetDataStore(STORE_NAME)
 local profiles = {} -- [Player] = profile
+local store = nil
+local storeUnavailable = false
+
+-- GetDataStore lanza error si el lugar no está publicado o la API está desactivada
+-- (pasa al probar en Studio). Se pide con pcall la primera vez que se necesita.
+local function getStore()
+	if store or storeUnavailable then
+		return store
+	end
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(STORE_NAME)
+	end)
+	if ok then
+		store = result
+	else
+		storeUnavailable = true
+		warn(`[DataService] Guardado desactivado en esta sesión: {result}`)
+	end
+	return store
+end
 
 local function defaultProfile()
 	return {
@@ -58,8 +77,17 @@ end
 
 local function loadProfile(player: Player)
 	local key = `u_{player.UserId}`
+	local activeStore = getStore()
+	if not activeStore then
+		-- Sin DataStore (Studio sin publicar): perfil temporal que no se guarda.
+		local profile = defaultProfile()
+		profile._unsaveable = true
+		profiles[player] = profile
+		return
+	end
+
 	local ok, data = withRetries(function()
-		return store:GetAsync(key)
+		return activeStore:GetAsync(key)
 	end)
 
 	if not ok then
@@ -82,8 +110,12 @@ local function saveProfile(player: Player)
 		return
 	end
 	local key = `u_{player.UserId}`
+	local activeStore = getStore()
+	if not activeStore then
+		return
+	end
 	local ok, err = withRetries(function()
-		store:UpdateAsync(key, function()
+		activeStore:UpdateAsync(key, function()
 			return profile
 		end)
 	end)
