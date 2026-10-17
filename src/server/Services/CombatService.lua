@@ -24,6 +24,7 @@ local RELOADING_ATTRIBUTE = "Reloading"
 local MELEE_HALF_ANGLE = 60 -- grados a cada lado de la mirada
 local COS_MELEE_HALF_ANGLE = math.cos(math.rad(MELEE_HALF_ANGLE))
 local MAX_AIM_ORIGIN_DISTANCE = 20 -- la cámara en tercera persona queda cerca del jugador
+local MAX_CORPSES_PER_SHOT = 4 -- cadáveres que un rayo puede atravesar antes de rendirse
 
 -- Piezas simples sin arte final: un bloque largo por arma.
 local VISUALS = {
@@ -234,6 +235,10 @@ local function emitNoise(position: Vector3, weapon, player: Player)
 	require(script.Parent.NoiseService):Emit(position, weapon.noiseRadius, player)
 end
 
+local function isDeadZombie(Zombies, model): boolean
+	return type(Zombies.IsDead) == "function" and Zombies:IsDead(model) == true
+end
+
 -- Un vector que mande el cliente debe ser un número finito y no casi cero.
 local function finiteVector(value): boolean
 	return typeof(value) == "Vector3" and value.Magnitude > 0.01 and value.Magnitude < math.huge
@@ -282,7 +287,7 @@ local function findMeleeTargets(character: Model, origin: Vector3, direction: Ve
 	local found, targets = {}, {}
 	for _, part in workspace:GetPartBoundsInRadius(origin, range, params) do
 		local model = Zombies:FromInstance(part)
-		if model and not found[model] then
+		if model and not found[model] and not isDeadZombie(Zombies, model) then
 			found[model] = true
 			if CombatService.inMeleeCone(origin, direction, model:GetPivot().Position, range) then
 				table.insert(targets, model)
@@ -357,14 +362,23 @@ local function shoot(player: Player, context, direction, origin)
 	end
 	params.FilterDescendantsInstances = ignore
 
+	-- Los cadáveres no frenan las balas: se ignoran y el rayo sigue.
 	local hits = 0
-	local result = workspace:Raycast(origin, direction.Unit * weapon.range, params)
 	local Zombies = getZombies()
-	if result and type(Zombies.FromInstance) == "function" then
-		local model = Zombies:FromInstance(result.Instance)
-		if model then
-			Zombies:Damage(model, weapon.damage, player)
-			hits = 1
+	if type(Zombies.FromInstance) == "function" then
+		for _ = 1, MAX_CORPSES_PER_SHOT do
+			local result = workspace:Raycast(origin, direction.Unit * weapon.range, params)
+			local model = result and Zombies:FromInstance(result.Instance)
+			if model and isDeadZombie(Zombies, model) then
+				table.insert(ignore, model)
+				params.FilterDescendantsInstances = ignore
+			else
+				if model then
+					Zombies:Damage(model, weapon.damage, player)
+					hits = 1
+				end
+				break
+			end
 		end
 	end
 

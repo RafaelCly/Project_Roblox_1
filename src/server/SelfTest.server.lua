@@ -716,6 +716,109 @@ if Inventory and Survival and testPlayer then
 		check("un caído sin ayuda muere al agotar el tiempo", Survival:IsDowned(testPlayer) == false and lifeHumanoid.Health <= 0)
 		RunConfig.DOWNED_SECONDS = previousSeconds
 	end
+
+	-- Armas y caído contra infectados reales (ZombieService de Rafael)
+	section("Armas contra infectados reales")
+	local Zombie = loaded.ZombieService
+	life = nextCharacter()
+	lifeHumanoid = life and life:FindFirstChildOfClass("Humanoid")
+	lifeRoot = life and life:FindFirstChild("HumanoidRootPart")
+	if Zombie and lifeHumanoid and lifeRoot then
+		local killedBy
+		Zombie:OnKilled(function(_, killer)
+			killedBy = killer
+		end)
+		local function spawnWalker(offset: Vector3)
+			return Zombie:Spawn("Walker", lifeRoot.Position + offset)
+		end
+		local function flatToward(model: Model): Vector3
+			local delta = model:GetPivot().Position - lifeRoot.Position
+			local flat = Vector3.new(delta.X, 0, delta.Z)
+			return flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, -1)
+		end
+		local function killZombie(model)
+			local record = Zombie:GetRecord(model)
+			if record and not record.dead then
+				record.humanoid.Health = 0
+			end
+		end
+		local ahead = lifeRoot.CFrame.LookVector
+
+		-- Cuchillo
+		Inventory:AddItem(testPlayer, "Knife", 1)
+		Combat:Equip(testPlayer, "Knife")
+		local walker = spawnWalker(ahead * 3)
+		check("aparece un infectado real", walker ~= nil)
+		task.wait(1) -- que caiga al suelo
+		local knifeOk, knifeHits = Combat:Attack(testPlayer, flatToward(walker))
+		check("el cuchillo golpea a un infectado real y le quita vida", knifeOk == true and knifeHits == 1 and Zombie:GetRecord(walker).humanoid.Health == Zombies.Walker.health - Weapons.Knife.damage)
+		check("un golpe alerta al infectado: lo persigue", Zombie:GetState(walker) == "Chase" or Zombie:GetState(walker) == "Attack")
+		killedBy = nil
+		local swings = 0
+		while not Zombie:IsDead(walker) and swings < 12 do
+			swings += 1
+			task.wait(Weapons.Knife.cooldown + 0.1)
+			lifeHumanoid.Health = lifeHumanoid.MaxHealth
+			Combat:Attack(testPlayer, flatToward(walker))
+		end
+		task.wait(0.2)
+		check("varios cuchillazos matan al infectado y se acredita al jugador", Zombie:IsDead(walker) and killedBy == testPlayer, `golpes {swings}`)
+		task.wait(Weapons.Knife.cooldown + 0.1)
+		local corpseOk, corpseHits = Combat:Attack(testPlayer, flatToward(walker))
+		check("un cadáver ya no cuenta como golpe", corpseOk == true and corpseHits == 0)
+		Inventory:RemoveItem(testPlayer, "Knife", 1)
+
+		-- Pistola
+		Inventory:AddItem(testPlayer, "Pistol", 1)
+		Combat:Equip(testPlayer, "Pistol")
+		Combat:_setMagazine(testPlayer, "Pistol", Weapons.Pistol.magazineSize)
+		local target = spawnWalker(ahead * 14)
+		task.wait(1)
+		killedBy = nil
+		local shots = 0
+		local shotLog = {}
+		while not Zombie:IsDead(target) and shots < 6 do
+			shots += 1
+			lifeHumanoid.Health = lifeHumanoid.MaxHealth
+			local toTarget = target:GetPivot().Position - lifeRoot.Position
+			local shotOk, shotResult = Combat:Attack(testPlayer, toTarget, lifeRoot.Position)
+			table.insert(shotLog, `{tostring(shotOk)}/{tostring(shotResult)}@{math.floor(toTarget.Magnitude)}`)
+			task.wait(Weapons.Pistol.cooldown + 0.1)
+		end
+		check("la pistola mata a un infectado real en pocos disparos", Zombie:IsDead(target) and killedBy == testPlayer and shots <= 5, `disparos {shots}: {table.concat(shotLog, " ")}`)
+
+		-- Ruido: un disparo atrae a un infectado lejano que no ve al jugador
+		Combat:_setMagazine(testPlayer, "Pistol", 5)
+		local sleeper = spawnWalker(-ahead * 60)
+		task.wait(1)
+		local before = Zombie:GetState(sleeper)
+		Combat:Attack(testPlayer, ahead, lifeRoot.Position)
+		task.wait(0.6)
+		local after = Zombie:GetState(sleeper)
+		check("un disparo atrae a un infectado lejano que no veía al jugador", before ~= "Investigate" and before ~= "Chase" and (after == "Investigate" or after == "Chase"), `{before} -> {after}`)
+		killZombie(sleeper)
+		Inventory:RemoveItem(testPlayer, "Pistol", 1)
+
+		-- Un infectado real deja caído al jugador y un compañero lo levanta
+		lifeHumanoid.Health = 5
+		local biter = spawnWalker(lifeRoot.CFrame.LookVector * 2.5)
+		local waited = 0
+		while not Survival:IsDowned(testPlayer) and waited < 10 do
+			task.wait(0.25)
+			waited += 0.25
+		end
+		local wasDowned = Survival:IsDowned(testPlayer)
+		local downedHealth = lifeHumanoid.Health
+		killZombie(biter)
+		check("el golpe de un infectado real deja al jugador caído, no muerto", wasDowned == true and downedHealth == 1)
+		local rescuer = makeFakeHelper(lifeRoot.Position + Vector3.new(3, 0, 0), 100)
+		check("un compañero levanta al jugador caído por un infectado", Survival:Revive(rescuer, testPlayer) == true and lifeHumanoid.Health == SurvivalConfig.REVIVE_HEALTH)
+		rescuer.Character:Destroy()
+		task.wait(3.5) -- que se retire el cuerpo del infectado
+	else
+		warn("[Test] FAIL no se pudo preparar la prueba con infectados reales")
+		failed += 1
+	end
 	Players.RespawnTime = previousRespawn
 else
 	warn("[Test] FAIL no hay jugador para las pruebas de integración")
