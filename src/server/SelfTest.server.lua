@@ -396,6 +396,115 @@ if Inventory and Survival and testPlayer then
 		end
 	end
 
+	-- Cuerpo a cuerpo (puro)
+	section("Cuerpo a cuerpo")
+	local flatLook = Vector3.new(0, 0, -1)
+	local here = Vector3.new(0, 5, 0)
+	check("cono: objetivo al frente dentro del alcance", Combat.inMeleeCone(here, flatLook, Vector3.new(0, 5, -4), 5) == true)
+	check("cono: objetivo fuera del alcance", Combat.inMeleeCone(here, flatLook, Vector3.new(0, 5, -9), 5) == false)
+	check("cono: objetivo detrás", Combat.inMeleeCone(here, flatLook, Vector3.new(0, 5, 4), 5) == false)
+	check("cono: objetivo a 45 grados entra", Combat.inMeleeCone(here, flatLook, Vector3.new(3, 5, -3), 5) == true)
+	check("cono: objetivo a 90 grados no entra", Combat.inMeleeCone(here, flatLook, Vector3.new(4, 5, 0), 5) == false)
+	check("cono: ignora la altura", Combat.inMeleeCone(here, flatLook, Vector3.new(0, 20, -4), 5) == true)
+
+	local wearInv = Inv.new(2)
+	Inv.add(wearInv, "Bat", 1)
+	local left, broken = Inv.wear(wearInv, "Bat", 1, 60)
+	check("desgastar un arma entera baja 1", left == 59 and broken == false and wearInv.slots[1].durability == 59)
+	wearInv.slots[1].durability = 1
+	left, broken = Inv.wear(wearInv, "Bat", 1, 60)
+	check("al llegar a 0 el arma se rompe y sale de la ranura", left == 0 and broken == true and wearInv.slots[1] == nil)
+	check("desgastar un arma que no hay no hace nada", Inv.wear(wearInv, "Bat", 1, 60) == nil)
+	Inv.add(wearInv, "Knife", 1, 30)
+	check("un arma puede entrar con su desgaste", wearInv.slots[1].durability == 30)
+
+	-- Cuerpo a cuerpo (con el jugador, infectados falsos)
+	local damageLog = {}
+	Combat:SetZombieProvider({
+		FromInstance = function(_, instance)
+			local model = instance:FindFirstAncestorOfClass("Model")
+			return model and model:GetAttribute("TestZombie") and model or nil
+		end,
+		Damage = function(_, model, amount, source)
+			table.insert(damageLog, { model = model, amount = amount, source = source })
+			return false
+		end,
+	})
+	local noiseLog = {}
+	loaded.NoiseService:Subscribe(function(position, radius, source)
+		if source == testPlayer then
+			table.insert(noiseLog, radius)
+		end
+	end)
+
+	local root = character:WaitForChild("HumanoidRootPart")
+	local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
+	local function makeFakeZombie(offset: Vector3)
+		local model = Instance.new("Model")
+		model.Name = "FakeZombie"
+		model:SetAttribute("TestZombie", true)
+		local part = Instance.new("Part")
+		part.Name = "HumanoidRootPart"
+		part.Size = Vector3.new(2, 2, 1)
+		part.Anchored = true
+		part.CanCollide = false
+		part.Position = root.Position + offset
+		part.Parent = model
+		model.PrimaryPart = part
+		model.Parent = workspace
+		return model
+	end
+
+	Inventory:AddItem(testPlayer, "Bat", 1)
+	check("atacar sin arma equipada se rechaza", Combat:Attack(testPlayer, look) == false)
+	Combat:Equip(testPlayer, "Bat")
+	check("dirección inválida se rechaza", Combat:Attack(testPlayer, nil) == false and Combat:Attack(testPlayer, "norte") == false and Combat:Attack(testPlayer, Vector3.zero) == false and Combat:Attack(testPlayer, Vector3.new(0, 9, 0)) == false)
+
+	local front = makeFakeZombie(look * 3)
+	local behind = makeFakeZombie(-look * 3)
+	local far = makeFakeZombie(look * 30)
+	local ok, hits = Combat:Attack(testPlayer, look)
+	check("el golpe acierta solo al infectado frente al jugador", ok == true and hits == 1 and #damageLog == 1 and damageLog[1].model == front)
+	check("el golpe hace el daño del arma y avisa quién atacó", damageLog[1].amount == Weapons.Bat.damage and damageLog[1].source == testPlayer)
+	check("el golpe emite el ruido del arma", noiseLog[1] == Weapons.Bat.noiseRadius)
+	check("el bate pierde 1 de durabilidad por golpe", Inventory:Get(testPlayer).slots[slotOf("Bat")].durability == Weapons.Bat.durability - 1)
+
+	local okAgain, reason = Combat:Attack(testPlayer, look)
+	check("atacar antes del cooldown se rechaza", okAgain == false and reason == "cooldown" and #damageLog == 1)
+	task.wait(Weapons.Bat.cooldown + 0.1)
+	check("pasado el cooldown se puede atacar otra vez", Combat:Attack(testPlayer, look) == true and #damageLog == 2)
+	task.wait(Weapons.Bat.cooldown + 0.1)
+	local missOk, missHits = Combat:Attack(testPlayer, Vector3.new(look.Z, 0, -look.X))
+	check("un golpe al aire es válido pero no daña, y hace ruido", missOk == true and missHits == 0 and #noiseLog == 3)
+	for _, model in { front, behind, far } do
+		model:Destroy()
+	end
+
+	-- Un arma rota
+	Inventory:Get(testPlayer).slots[slotOf("Bat")].durability = 1
+	task.wait(Weapons.Bat.cooldown + 0.1)
+	check("el golpe que gasta la última durabilidad rompe el bate", Combat:Attack(testPlayer, look) == true and Inventory:Count(testPlayer, "Bat") == 0)
+	check("un bate roto queda desequipado", Combat:GetEquipped(testPlayer) == nil and visualCount() == 0)
+
+	-- La durabilidad viaja con el arma
+	Inventory:AddItem(testPlayer, "Bat", 1, 7)
+	Inventory:DropSlot(testPlayer, slotOf("Bat"))
+	local droppedBat
+	for _, pickup in pickups:GetChildren() do
+		if pickup:GetAttribute("ItemId") == "Bat" then
+			droppedBat = pickup
+		end
+	end
+	check("al soltar un arma se guarda su durabilidad", droppedBat ~= nil and droppedBat:GetAttribute("Durability") == 7)
+	if droppedBat then
+		Inventory:_collect(testPlayer, droppedBat)
+		check("al recogerla conserva su durabilidad", Inventory:Get(testPlayer).slots[slotOf("Bat")].durability == 7)
+	end
+	Inventory:RemoveItem(testPlayer, "Bat", 1)
+
+	check("con las manos vacías no se puede atacar", Combat:Attack(testPlayer, look) == false)
+	Combat:SetZombieProvider(nil)
+
 	-- Morir suelta todo
 	Inventory:AddItem(testPlayer, "CannedFood", 2)
 	Inventory:AddItem(testPlayer, "Bat", 1)
