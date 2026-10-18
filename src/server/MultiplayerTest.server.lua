@@ -34,6 +34,8 @@ local Inventory = require(services.InventoryService)
 local Survival = require(services.SurvivalService)
 local ZombieSvc = require(services.ZombieService)
 local DataSvc = require(services.DataService)
+local Combat = require(services.CombatService)
+local Weapons = require(Shared.Config.Weapons)
 local SurvivalConfig = require(Shared.Config.Survival)
 
 local passed, failed = 0, 0
@@ -158,6 +160,36 @@ if dropped then
 	check("el jugador 2 puede recogerlo", Inventory:_collect(p2, dropped) == true and countOf(p2, "Knife") == 1 and countOf(p1, "Knife") == 0)
 end
 Inventory:RemoveItem(p2, "Knife", 1)
+
+-- Un compañero en la línea de fuego no frena la bala ---------------------------------------------
+section("Disparo con un compañero en la línea")
+local shotShield1, shotShield2 = shield(character1), shield(character2)
+teleport(character1, base)
+teleport(character2, base + Vector3.new(0, 0, -6)) -- justo delante del tirador
+local aimDirection = Vector3.new(0, 0, -1)
+Inventory:AddItem(p1, "Pistol", 1)
+Inventory:AddItem(p1, "PistolAmmo", 20)
+Combat:Equip(p1, "Pistol")
+Combat:_setMagazine(p1, "Pistol", Weapons.Pistol.magazineSize)
+local shotTarget = ZombieSvc:Spawn("Walker", Vector3.new(base.X, 0, base.Z - 20)) -- detrás del compañero
+task.wait(0.4)
+local targetHumanoid = shotTarget and shotTarget:FindFirstChildOfClass("Humanoid")
+local mateHealthBefore = humanoid2.Health
+local shotOk, shotHits = Combat:Attack(p1, aimDirection, root1.Position)
+check("el disparo atraviesa al compañero y acierta al infectado", shotOk == true and shotHits == 1, `ok={tostring(shotOk)} hits={tostring(shotHits)}`)
+check("el infectado detrás del compañero pierde vida", targetHumanoid ~= nil and targetHumanoid.Health < targetHumanoid.MaxHealth)
+check("el compañero no recibe daño del disparo", humanoid2.Health == mateHealthBefore, tostring(humanoid2.Health))
+Combat:Unequip(p1)
+Inventory:RemoveItem(p1, "Pistol", 1)
+local ammoLeft = countOf(p1, "PistolAmmo")
+if ammoLeft > 0 then
+	Inventory:RemoveItem(p1, "PistolAmmo", ammoLeft)
+end
+if shotTarget then
+	ZombieSvc:Damage(shotTarget, 99999, nil)
+end
+shotShield1:Destroy()
+shotShield2:Destroy()
 
 -- Infectados con dos jugadores -----------------------------------------------------------------
 section("Infectados con dos jugadores")

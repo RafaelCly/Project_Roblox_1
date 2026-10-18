@@ -366,7 +366,13 @@ local function shoot(player: Player, context, direction, origin)
 	-- El rayo lo lanza el servidor. El cliente solo mostró el disparo al instante.
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
+	-- Los compañeros tampoco frenan las balas: no hay fuego amigo y no deben hacer de escudo.
 	local ignore = { context.character }
+	for _, other in Players:GetPlayers() do
+		if other.Character and other.Character ~= context.character then
+			table.insert(ignore, other.Character)
+		end
+	end
 	local pickups = workspace:FindFirstChild("Pickups")
 	if pickups then
 		table.insert(ignore, pickups)
