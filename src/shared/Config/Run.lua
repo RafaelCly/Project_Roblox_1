@@ -22,6 +22,8 @@ local Run = {
 	},
 	BUDGET_PER_EXTRA_PLAYER = 0.25, -- +25% de presupuesto por jugador sobre el primero
 
+	RESULT_PAUSE_SECONDS = 8, -- pantalla de victoria o derrota antes de limpiar y volver al lobby
+
 	BUNKER_DOOR_SECONDS = 90,
 	BUNKER_PARTS_REQUIRED = 3,
 }

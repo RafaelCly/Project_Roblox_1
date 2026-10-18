@@ -17,6 +17,11 @@ if not DevConfig.RUN_SELF_TESTS then
 	workspace:SetAttribute("SelfTestDone", true)
 	return
 end
+if DevConfig.ONLY_TEST then
+	print(`[Test] INFO ONLY_TEST = {DevConfig.ONLY_TEST}: se omite la suite completa (Config/Dev.lua)`)
+	workspace:SetAttribute("SelfTestDone", true)
+	return
+end
 
 -- Deja que Main termine de iniciar los servicios y que, en el modo de 2 jugadores
 -- (Prueba > Clientes y servidores), el segundo cliente se conecte.

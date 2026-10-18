@@ -19,6 +19,14 @@ local Dev = {
 
 	-- true = WeaponAnimator escribe en la Salida cada postura que aplica.
 	DEBUG_ANIMATION = false,
+
+	-- Velocidad del reloj de la partida. 1 = normal (30 minutos). Con 60, la partida dura
+	-- 30 segundos: sirve para probar el final sin esperar. MatchService la lee al empezar.
+	MATCH_TIME_SCALE = 1,
+
+	-- nil = corren todas las pruebas automáticas. "match" = solo las de la partida
+	-- (MatchTest.server.lua), que tardan menos de un minuto.
+	ONLY_TEST = nil,
 }
 
 return Dev

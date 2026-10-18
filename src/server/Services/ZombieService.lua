@@ -499,6 +499,17 @@ function ZombieService:CountActive(): number
 	return activeCount
 end
 
+-- Borra de golpe todos los infectados (vivos y cadáveres), sin avisos de muerte ni
+-- estadísticas. Lo usa MatchService al terminar una partida.
+function ZombieService:Clear()
+	for model, record in zombies do
+		record.dead = true
+		zombies[model] = nil
+		model:Destroy()
+	end
+	activeCount = 0
+end
+
 -- Ciclo de vida -----------------------------------------------------------
 
 function ZombieService:Init()
