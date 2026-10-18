@@ -10,7 +10,16 @@ if not RunService:IsStudio() then
 	return
 end
 
-task.wait(2) -- deja que Main termine de iniciar los servicios
+-- Deja que Main termine de iniciar los servicios y que, en el modo de 2 jugadores
+-- (Prueba > Clientes y servidores), el segundo cliente se conecte.
+task.wait(10)
+if #Players:GetPlayers() >= 2 then
+	-- Esta suite usa a UN jugador y se mezclaría con el otro. Con 2 jugadores corre
+	-- MultiplayerTest.server.lua (busca "[TestMulti]").
+	print("[Test] INFO hay 2 jugadores: se omite esta suite de 1 jugador; ver [TestMulti]")
+	workspace:SetAttribute("SelfTestDone", true)
+	return
+end
 
 local passed, failed = 0, 0
 
@@ -1450,3 +1459,4 @@ else
 end
 
 print(`[Test] RESULTADO: {passed} PASS, {failed} FAIL`)
+workspace:SetAttribute("SelfTestDone", true) -- avisa a MultiplayerTest de que ya puede empezar
