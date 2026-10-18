@@ -1327,4 +1327,126 @@ else
 	failed += 1
 end
 
+-- Rendimiento: 30 infectados -------------------------------------------------------------
+-- Mide cuánto tarda cada fotograma del servidor. En Studio el servidor comparte proceso
+-- con el cliente, así que las cifras son un peor caso: en un servidor real salen mejores.
+section("Rendimiento: 30 infectados")
+local PERF_ZOMBIES = 30
+local MIN_AVERAGE_FPS = 30 -- por debajo, la IA necesita optimizarse
+local MAX_WORST_FRAME_MS = 400 -- un tirón mayor se nota como congelación
+
+local function measureServerFrames(seconds: number)
+	local deltas = {}
+	local connection = RunService.Heartbeat:Connect(function(dt)
+		table.insert(deltas, dt)
+	end)
+	task.wait(seconds)
+	connection:Disconnect()
+	table.sort(deltas)
+	local sum = 0
+	for _, dt in deltas do
+		sum += dt
+	end
+	local average = sum / math.max(1, #deltas)
+	return {
+		frames = #deltas,
+		averageFps = 1 / average,
+		p95Ms = deltas[math.max(1, math.floor(#deltas * 0.95))] * 1000,
+		worstMs = deltas[#deltas] * 1000,
+	}
+end
+
+local function describeFrames(stats)
+	return `{stats.frames} fotogramas, {string.format("%.1f", stats.averageFps)} FPS de media, p95 {string.format("%.1f", stats.p95Ms)} ms, peor {string.format("%.1f", stats.worstMs)} ms`
+end
+
+local perfCharacter, perfHumanoid, perfRoot = waitForAlivePlayer(20)
+if ZombieSvc and loaded.NoiseService and perfCharacter then
+	task.wait(1)
+	local shield = Instance.new("ForceField") -- que 30 infectados no maten al jugador de prueba
+	shield.Visible = false
+	shield.Parent = perfCharacter
+	local perfBase = perfRoot.Position
+
+	local function spawnGroup(fromAngle: number, toAngle: number)
+		local group = {}
+		for i = 1, PERF_ZOMBIES do
+			local angle = fromAngle + (toAngle - fromAngle) * (i - 1) / (PERF_ZOMBIES - 1)
+			local radius = 25 + (i % 3) * 8
+			local position = perfBase + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+			local model = ZombieSvc:Spawn(i % 3 == 0 and "Runner" or "Walker", position)
+			if model then
+				local at = model.HumanoidRootPart.Position
+				model:PivotTo(CFrame.lookAt(at, Vector3.new(perfBase.X, at.Y, perfBase.Z)))
+				table.insert(group, model)
+			end
+		end
+		return group
+	end
+
+	local function countInStates(group, states)
+		local count = 0
+		for _, model in group do
+			if states[ZombieSvc:GetState(model)] then
+				count += 1
+			end
+		end
+		return count
+	end
+
+	local function killGroup(group)
+		for _, model in group do
+			ZombieSvc:Damage(model, 99999, nil)
+		end
+	end
+
+	-- Referencia: el servidor sin infectados.
+	local baseline = measureServerFrames(4)
+	print(`[Test] INFO rendimiento sin infectados: {describeFrames(baseline)}`)
+
+	-- Escenario A: 30 infectados rodean al jugador en campo abierto y lo persiguen.
+	local chasers = spawnGroup(0, math.pi * 2 * (PERF_ZOMBIES - 1) / PERF_ZOMBIES)
+	check(`aparecen {PERF_ZOMBIES} infectados`, #chasers == PERF_ZOMBIES, tostring(#chasers))
+	task.wait(1.5)
+	local engagedA = countInStates(chasers, { Chase = true, Attack = true })
+	local openField = measureServerFrames(8)
+	print(`[Test] INFO rendimiento con {PERF_ZOMBIES} persiguiendo (campo abierto): {describeFrames(openField)}; {engagedA} alertas al inicio`)
+	check("la mayoría de los infectados ve y persigue al jugador", engagedA >= PERF_ZOMBIES * 0.6, `{engagedA}/{PERF_ZOMBIES}`)
+	check(`campo abierto: al menos {MIN_AVERAGE_FPS} FPS de media`, openField.averageFps >= MIN_AVERAGE_FPS, string.format("%.1f", openField.averageFps))
+	check(`campo abierto: ningún tirón de más de {MAX_WORST_FRAME_MS} ms`, openField.worstMs <= MAX_WORST_FRAME_MS, string.format("%.1f", openField.worstMs))
+	killGroup(chasers)
+	task.wait(1.5)
+	check("tras el escenario A no quedan infectados vivos", ZombieSvc:CountActive() == 0)
+
+	-- Escenario B: un muro ancho los separa del jugador y todos oyen un ruido, así que cada
+	-- uno calcula rutas para rodearlo (cada segundo). Es el caso más caro para la IA.
+	local perfWall = Instance.new("Part")
+	perfWall.Name = "PerfWall"
+	perfWall.Anchored = true
+	perfWall.Size = Vector3.new(1, 14, 100)
+	perfWall.Position = perfBase + Vector3.new(14, 4, 0)
+	perfWall.Parent = workspace
+	local behindWall = spawnGroup(-0.9, 0.9)
+	task.wait(0.5)
+	loaded.NoiseService:Emit(perfBase, 300, nil)
+	task.wait(0.5)
+	local investigating = countInStates(behindWall, { Investigate = true, Chase = true, Attack = true })
+	local pathing = measureServerFrames(8)
+	print(`[Test] INFO rendimiento con {PERF_ZOMBIES} rodeando un muro (rutas): {describeFrames(pathing)}; {investigating} reaccionaron al ruido`)
+	check("todos los infectados oyen el ruido tras el muro", investigating == #behindWall, `{investigating}/{#behindWall}`)
+	check(`con muro y rutas: al menos {MIN_AVERAGE_FPS} FPS de media`, pathing.averageFps >= MIN_AVERAGE_FPS, string.format("%.1f", pathing.averageFps))
+	check(`con muro y rutas: ningún tirón de más de {MAX_WORST_FRAME_MS} ms`, pathing.worstMs <= MAX_WORST_FRAME_MS, string.format("%.1f", pathing.worstMs))
+
+	-- Limpieza
+	killGroup(behindWall)
+	perfWall:Destroy()
+	shield:Destroy()
+	perfHumanoid.Health = perfHumanoid.MaxHealth
+	task.wait(1.5)
+	check("tras la prueba de rendimiento no quedan infectados vivos", ZombieSvc:CountActive() == 0)
+else
+	warn("[Test] FAIL no hay jugador vivo para la prueba de rendimiento")
+	failed += 1
+end
+
 print(`[Test] RESULTADO: {passed} PASS, {failed} FAIL`)
