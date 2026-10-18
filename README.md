@@ -49,7 +49,28 @@ git checkout dev-rafael   # Axel: git checkout dev-axel
 3. Abre un lugar vacío en Studio, pulsa **Connect** en el plugin de Rojo, y los scripts aparecen solos.
 4. Pulsa **Play** y revisa la ventana Output: debe aparecer `[Last Refuge] Servidor iniciado`.
 
-Nada de esto se ha probado todavía dentro de Roblox Studio. Si algo falla al conectar, copia el mensaje del Output y revísalo en el equipo.
+Si algo falla al conectar, copia el mensaje del Output y revísalo en el equipo.
+
+## Pruebas automáticas
+
+Corren solas dentro de Studio (no en el juego publicado). Cada línea dice `PASS` o `FAIL` y al final hay un resultado. Nada se da por bueno si hay algún `FAIL`.
+
+| Qué | Cómo se corre | Dónde se lee |
+|---|---|---|
+| **1 jugador** (todo el juego, 30 infectados incluidos) | **Play** normal. Tarda unos 3 minutos. | Output, filtra por `[Test]` y `RESULTADO` |
+| **Cliente** (eventos y controladores) | Se corre sola en el mismo Play | Output, filtra por `[TestCliente]` |
+| **2 jugadores** (pasar objetos, levantar, objetivo de los infectados) | Ver abajo | Output **del servidor**, filtra por `[TestMulti]` |
+
+Probar con 2 jugadores:
+
+1. **Prueba → Iniciar sesión de prueba → Servidor y cliente(s)**. Se abre la ventana del servidor.
+2. En esa ventana: **Prueba → Añadir clientes**. Entra el jugador 1 y empieza la suite de 1 jugador.
+3. Cuando esa suite termine (unos 3 minutos), vuelve a pulsar **Prueba → Añadir clientes** para el jugador 2. Las pruebas de 2 jugadores arrancan solas.
+4. Al terminar, **Prueba → Finalizar sesión**. La Salida del servidor se cierra con la sesión, pero queda guardada en los registros de Studio (`%LOCALAPPDATA%\Roblox\logs`); busca `TestMulti` en el archivo más reciente.
+
+Si añades los dos clientes desde el inicio, la suite de 1 jugador se aparta sola y solo corren las de 2 jugadores.
+
+Medidas de rendimiento (Studio, un servidor y un cliente en el mismo proceso): 60 FPS sin infectados y 59.7 con 30 persiguiendo, peor tirón de 25 ms.
 
 ## Estructura
 
