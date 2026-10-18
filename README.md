@@ -8,6 +8,8 @@ Desarrollado por [@RafaelCly](https://github.com/RafaelCly) y Axel.
 
 - [Diseño del MVP](docs/diseno-mvp.md): qué vamos a construir, sistemas, reparto y plan.
 - [Investigación de mercado](docs/investigacion-mercado.md): por qué este juego y cómo monetizarlo.
+- [Plan de la semana 2](docs/plan-semana-2.md): armas, infectados y caídos (terminada).
+- [Plan de la semana 3](docs/plan-semana-3.md): partida completa de principio a fin, con el reparto entre Rafael y Axel.
 
 ## Estado
 
@@ -15,8 +17,8 @@ Desarrollado por [@RafaelCly](https://github.com/RafaelCly) y Axel.
 - [x] Estructura del proyecto con Rojo (esqueletos)
 - [x] Semana 1: guardado, vida y hambre, inventario básico, un edificio con botín (108 pruebas pasan en Studio; falta probar el guardado real y con varios jugadores)
 - [x] Semana 2: armas, infectados y caídos (324 pruebas de 1 jugador, 26 de 2 jugadores y 21 de cliente pasan en Studio; 59 FPS con 30 infectados)
-- [ ] Semana 3: ruido, sigilo, oleada 1, mapa modular
-- [ ] Semana 4: lobby, matchmaking, 3 oleadas y búnker (partida completa)
+- [ ] Semana 3: partida completa en un servidor: mapa modular, 3 oleadas, búnker y resultado (ruido y sigilo ya hechos en la semana 2)
+- [ ] Semana 4: lobby, matchmaking y teletransporte a servidor reservado, tienda básica
 - [ ] Semana 5: tienda, tipos de infectados y balance
 - [ ] Semana 6: pruebas con jugadores y lanzamiento cerrado
 
