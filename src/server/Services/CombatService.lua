@@ -14,6 +14,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Remotes = require(Shared.Remotes)
 local Items = require(Shared.Config.Items)
 local Weapons = require(Shared.Config.Weapons)
+local WeaponModels = require(script.Parent.Parent.Util.WeaponModels)
 
 local CombatService = {}
 
@@ -82,6 +83,13 @@ local function attachVisual(player: Player, weaponId: string): boolean
 	weld.Part1 = part
 	weld.C0 = gripOffset * CFrame.new(0, 0, -look.size.Z / 2)
 	weld.Parent = part
+
+	-- Con modelo de varias piezas (Util/WeaponModels), este bloque pasa a ser un ancla
+	-- invisible en la palma y las piezas visibles cuelgan de él.
+	if WeaponModels.has(weaponId) then
+		weld.C0 = gripOffset
+		WeaponModels.decorate(weaponId, part)
+	end
 
 	part.Parent = player.Character
 	return true
@@ -233,6 +241,9 @@ end
 
 local function emitNoise(position: Vector3, weapon, player: Player)
 	require(script.Parent.NoiseService):Emit(position, weapon.noiseRadius, player)
+	-- Cada ataque aceptado sube este contador. Todos los clientes lo ven (atributo
+	-- replicado) y WeaponAnimator anima el brazo del jugador que atacó.
+	player:SetAttribute("AttackSeq", (player:GetAttribute("AttackSeq") or 0) + 1)
 end
 
 local function isDeadZombie(Zombies, model): boolean

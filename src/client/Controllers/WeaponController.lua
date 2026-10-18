@@ -35,7 +35,13 @@ local function equippedWeapon()
 end
 
 -- Movimiento local del arma. No cambia nada en el servidor.
+-- Desactivado: ahora el brazo entero se anima en WeaponAnimator (a partir de AttackSeq).
+-- Girar además el bloque del arma aquí lo deformaría.
+local USE_BLOCK_SWING = false
 local function playSwing(character: Model)
+	if not USE_BLOCK_SWING then
+		return
+	end
 	local visual = character:FindFirstChild(VISUAL_NAME)
 	local weld = visual and visual:FindFirstChildOfClass("Weld")
 	if not weld then
@@ -103,8 +109,10 @@ local function fire(character: Model, weapon)
 
 	Remotes.get("RequestAttack"):FireServer(ray.Direction, ray.Origin)
 
+	-- La pistola tiene un Attachment "Muzzle" en la punta del cañón (Util/WeaponModels).
 	local visual = character:FindFirstChild(VISUAL_NAME)
-	local muzzle = visual and visual.Position or character:GetPivot().Position
+	local muzzleAttachment = visual and visual:FindFirstChild("Muzzle")
+	local muzzle = muzzleAttachment and muzzleAttachment.WorldPosition or visual and visual.Position or character:GetPivot().Position
 	drawTracer(character, muzzle, endPoint)
 end
 

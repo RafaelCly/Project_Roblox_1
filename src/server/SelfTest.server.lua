@@ -10,6 +10,14 @@ if not RunService:IsStudio() then
 	return
 end
 
+-- Interruptor en shared/Config/Dev.lua (RUN_SELF_TESTS) para jugar a mano sin las pruebas.
+local DevConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Dev"))
+if not DevConfig.RUN_SELF_TESTS then
+	print("[Test] INFO pruebas automáticas desactivadas (Config/Dev.lua)")
+	workspace:SetAttribute("SelfTestDone", true)
+	return
+end
+
 -- Deja que Main termine de iniciar los servicios y que, en el modo de 2 jugadores
 -- (Prueba > Clientes y servidores), el segundo cliente se conecte.
 task.wait(10)
@@ -1455,6 +1463,93 @@ if ZombieSvc and loaded.NoiseService and perfCharacter then
 	check("tras la prueba de rendimiento no quedan infectados vivos", ZombieSvc:CountActive() == 0)
 else
 	warn("[Test] FAIL no hay jugador vivo para la prueba de rendimiento")
+	failed += 1
+end
+
+-- Animación de armas: el servidor avisa cada ataque aceptado con AttackSeq ---------------
+-- (Los clientes lo ven y animan el brazo; ver client/Controllers/WeaponAnimator.)
+section("Animación de armas (servidor)")
+local animServerCharacter, animServerHumanoid, animServerRoot = waitForAlivePlayer(20)
+if CombatSvc and Inventory and animServerCharacter then
+	task.wait(1)
+	local animLook = Vector3.new(animServerRoot.CFrame.LookVector.X, 0, animServerRoot.CFrame.LookVector.Z).Unit
+	local function attackSeq()
+		return testPlayer:GetAttribute("AttackSeq") or 0
+	end
+
+	local WeaponModels = require(script.Parent.Util.WeaponModels)
+	-- Modelo del arma en la mano: piezas hijas del ancla EquippedWeaponVisual.
+	local function visualInfo()
+		local anchor = animServerCharacter:FindFirstChild("EquippedWeaponVisual")
+		if not anchor then
+			return nil
+		end
+		local info = { anchor = anchor, parts = 0, solid = 0, muzzle = anchor:FindFirstChild("Muzzle") ~= nil }
+		for _, child in anchor:GetChildren() do
+			if child:IsA("BasePart") then
+				info.parts += 1
+				if child.CanCollide or child.CanQuery or child.CanTouch then
+					info.solid += 1
+				end
+			end
+		end
+		local roots = 0
+		for _, child in animServerCharacter:GetChildren() do
+			if child.Name == "EquippedWeaponVisual" then
+				roots += 1
+			end
+		end
+		info.roots = roots
+		return info
+	end
+
+	Inventory:AddItem(testPlayer, "Bat", 1)
+	CombatSvc:Equip(testPlayer, "Bat")
+	local batModel = visualInfo()
+	check("el bate tiene su modelo de varias piezas", batModel ~= nil and batModel.parts == WeaponModels.partCount("Bat") and batModel.parts >= 4, batModel and tostring(batModel.parts))
+	check("el ancla del bate es invisible y hay una sola raíz", batModel ~= nil and batModel.anchor.Transparency == 1 and batModel.roots == 1)
+	check("las piezas del bate no chocan ni estorban a las balas", batModel ~= nil and batModel.solid == 0)
+	task.wait(Weapons.Bat.cooldown + 0.2)
+	local seqBefore = attackSeq()
+	check("un golpe aceptado sube AttackSeq en uno", CombatSvc:Attack(testPlayer, animLook) == true and attackSeq() == seqBefore + 1)
+	check("un golpe rechazado por cooldown no sube AttackSeq", CombatSvc:Attack(testPlayer, animLook) == false and attackSeq() == seqBefore + 1)
+	CombatSvc:Unequip(testPlayer)
+	Inventory:RemoveItem(testPlayer, "Bat", 1)
+
+	Inventory:AddItem(testPlayer, "Pistol", 1)
+	Inventory:AddItem(testPlayer, "PistolAmmo", 6)
+	CombatSvc:Equip(testPlayer, "Pistol")
+	CombatSvc:_setMagazine(testPlayer, "Pistol", Weapons.Pistol.magazineSize)
+	local pistolModel = visualInfo()
+	check("la pistola tiene su modelo de varias piezas", pistolModel ~= nil and pistolModel.parts == WeaponModels.partCount("Pistol") and pistolModel.parts >= 6, pistolModel and tostring(pistolModel.parts))
+	check("la pistola tiene la punta del cañón (Muzzle) para el trazador", pistolModel ~= nil and pistolModel.muzzle == true)
+	check("las piezas de la pistola no chocan ni estorban a las balas", pistolModel ~= nil and pistolModel.solid == 0 and pistolModel.roots == 1)
+	-- El cooldown cuenta desde el último ataque, sea del arma que sea: el golpe de bate de
+	-- arriba lo dejó activo.
+	task.wait(Weapons.Pistol.cooldown + 0.2)
+	seqBefore = attackSeq()
+	check("un disparo aceptado sube AttackSeq en uno", CombatSvc:Attack(testPlayer, animLook, animServerRoot.Position) == true and attackSeq() == seqBefore + 1)
+	CombatSvc:_setMagazine(testPlayer, "Pistol", 0)
+	task.wait(Weapons.Pistol.cooldown + 0.2)
+	seqBefore = attackSeq()
+	check("un disparo sin balas no sube AttackSeq", CombatSvc:Attack(testPlayer, animLook, animServerRoot.Position) == false and attackSeq() == seqBefore)
+	CombatSvc:Unequip(testPlayer)
+	Inventory:RemoveItem(testPlayer, "Pistol", 1)
+	local leftoverAmmo = Inventory:Count(testPlayer, "PistolAmmo")
+	if leftoverAmmo > 0 then
+		Inventory:RemoveItem(testPlayer, "PistolAmmo", leftoverAmmo)
+	end
+
+	Inventory:AddItem(testPlayer, "Knife", 1)
+	CombatSvc:Equip(testPlayer, "Knife")
+	local knifeModel = visualInfo()
+	check("el cuchillo tiene su modelo de varias piezas", knifeModel ~= nil and knifeModel.parts == WeaponModels.partCount("Knife") and knifeModel.parts >= 4, knifeModel and tostring(knifeModel.parts))
+	check("las piezas del cuchillo no chocan ni estorban a las balas", knifeModel ~= nil and knifeModel.solid == 0 and knifeModel.roots == 1)
+	CombatSvc:Unequip(testPlayer)
+	check("al guardar el arma desaparece el modelo entero", visualInfo() == nil)
+	Inventory:RemoveItem(testPlayer, "Knife", 1)
+else
+	warn("[Test] FAIL no hay jugador vivo para la prueba de animación de armas")
 	failed += 1
 end
 
