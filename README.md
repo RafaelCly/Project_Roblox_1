@@ -61,6 +61,7 @@ Corren solas dentro de Studio (no en el juego publicado). Cada línea dice `PASS
 |---|---|---|
 | **1 jugador** (todo el juego, 30 infectados incluidos) | **Play** normal. Tarda unos 3 minutos. | Output, filtra por `[Test]` y `RESULTADO` |
 | **Cliente** (eventos y controladores) | Se corre sola en el mismo Play | Output, filtra por `[TestCliente]` |
+| **Partida** (`MatchService`: estados, reloj, derrota, limpieza) | Sola, al terminar la suite de 1 jugador. Para correr solo esta (menos de 1 minuto): en `Config/Dev.lua` pon `ONLY_TEST = "match"` (no lo subas) | Output, filtra por `[TestMatch]` |
 | **2 jugadores** (pasar objetos, levantar, objetivo de los infectados) | Ver abajo | Output **del servidor**, filtra por `[TestMulti]` |
 
 Probar con 2 jugadores:

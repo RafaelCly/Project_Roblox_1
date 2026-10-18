@@ -46,7 +46,7 @@ print(`[TestCliente] RESULTADO: {passed} PASS, {failed} FAIL`)
 -- Animación de armas: sigue lo que hace la suite del servidor (equipa, ataca, desequipa) ------
 -- Esperas largas a propósito: depende de cuándo llegue la suite del servidor a las armas.
 local Dev = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"):WaitForChild("Dev"))
-if Dev.RUN_SELF_TESTS then
+if Dev.RUN_SELF_TESTS and not Dev.ONLY_TEST then
 	task.spawn(function()
 		local Players = game:GetService("Players")
 		local localPlayer = Players.LocalPlayer
